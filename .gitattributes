@@ -1,0 +1,9 @@
+# The repository was started on Windows and picked up CRLF in its first commits.
+# Everything here is built and run on Linux, in containers, so LF is the format
+# that matters; leaving it to each contributor's core.autocrlf produces diffs
+# where every line of an untouched file appears to have changed.
+* text=auto eol=lf
+
+# Binary, and must not be touched.
+*.png binary
+*.ssz binary
