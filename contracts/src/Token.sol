@@ -95,20 +95,12 @@ contract Token {
     ///
     /// @dev The signature commits to a deadline and to a nonce that increments
     ///      on use, so it can be neither replayed nor held indefinitely.
-    function permit(
-        address owner,
-        address spender,
-        uint256 value,
-        uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external {
+    function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)
+        external
+    {
         if (block.timestamp > deadline) revert PermitExpired(deadline, block.timestamp);
 
-        bytes32 structHash = keccak256(
-            abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonces[owner]++, deadline)
-        );
+        bytes32 structHash = keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonces[owner]++, deadline));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR(), structHash));
 
         address recovered = ecrecover(digest, v, r, s);
@@ -123,9 +115,8 @@ contract Token {
         emit Approval(owner, spender, value);
     }
 
-    bytes32 public constant PERMIT_TYPEHASH = keccak256(
-        "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
-    );
+    bytes32 public constant PERMIT_TYPEHASH =
+        keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
 
     /// @notice EIP-712 domain separator.
     ///
@@ -137,9 +128,7 @@ contract Token {
     function DOMAIN_SEPARATOR() public view returns (bytes32) {
         return keccak256(
             abi.encode(
-                keccak256(
-                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-                ),
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
                 keccak256(bytes(name)),
                 keccak256("1"),
                 block.chainid,

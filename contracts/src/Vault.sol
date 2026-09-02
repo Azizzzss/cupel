@@ -33,11 +33,7 @@ contract Vault {
     event Approval(address indexed owner, address indexed spender, uint256 value);
     event Deposit(address indexed caller, address indexed owner, uint256 assets, uint256 shares);
     event Withdraw(
-        address indexed caller,
-        address indexed receiver,
-        address indexed owner,
-        uint256 assets,
-        uint256 shares
+        address indexed caller, address indexed receiver, address indexed owner, uint256 assets, uint256 shares
     );
 
     error ZeroShares();
@@ -95,10 +91,7 @@ contract Vault {
         emit Deposit(msg.sender, receiver, assets, shares);
     }
 
-    function redeem(uint256 shares, address receiver, address owner)
-        external
-        returns (uint256 assets)
-    {
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256 assets) {
         if (msg.sender != owner) {
             uint256 allowed = allowance[owner][msg.sender];
             if (allowed != type(uint256).max) {

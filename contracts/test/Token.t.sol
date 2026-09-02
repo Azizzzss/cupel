@@ -74,11 +74,7 @@ contract TokenTest is Lab {
         vm.prank(spender);
         token.transferFrom(alice, bob, 400e18);
 
-        assertEq(
-            token.allowance(alice, spender),
-            type(uint256).max,
-            "infinite allowance stays infinite"
-        );
+        assertEq(token.allowance(alice, spender), type(uint256).max, "infinite allowance stays infinite");
     }
 
     function test_spendingBeyondAllowanceReverts() public {
@@ -160,18 +156,14 @@ contract TokenTest is Lab {
 
         bytes32 foreignDomain = keccak256(
             abi.encode(
-                keccak256(
-                    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-                ),
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
                 keccak256(bytes(token.name())),
                 keccak256("1"),
                 uint256(999999), // some other chain
                 address(token)
             )
         );
-        bytes32 structHash = keccak256(
-            abi.encode(token.PERMIT_TYPEHASH(), owner, spender, 25e18, uint256(0), deadline)
-        );
+        bytes32 structHash = keccak256(abi.encode(token.PERMIT_TYPEHASH(), owner, spender, 25e18, uint256(0), deadline));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", foreignDomain, structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(key, digest);
 
@@ -189,16 +181,13 @@ contract TokenTest is Lab {
         assertEq(token.balanceOf(alice), 900e18, "balance fell");
     }
 
-    function _permitDigest(
-        address owner,
-        address spenderAddress,
-        uint256 value,
-        uint256 nonce,
-        uint256 deadline
-    ) private view returns (bytes32) {
-        bytes32 structHash = keccak256(
-            abi.encode(token.PERMIT_TYPEHASH(), owner, spenderAddress, value, nonce, deadline)
-        );
+    function _permitDigest(address owner, address spenderAddress, uint256 value, uint256 nonce, uint256 deadline)
+        private
+        view
+        returns (bytes32)
+    {
+        bytes32 structHash =
+            keccak256(abi.encode(token.PERMIT_TYPEHASH(), owner, spenderAddress, value, nonce, deadline));
         return keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), structHash));
     }
 }

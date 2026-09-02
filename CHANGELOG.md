@@ -1,0 +1,116 @@
+# Changelog
+
+Every phase of the [roadmap](README.md#roadmap) ships as a tagged release. The
+format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## Unreleased
+
+Phase E: the multi-client network.
+
+---
+
+## [0.4.0] — Phase D: policy signing
+
+A signing service on `:8550` holding a key that callers cannot use freely.
+
+### Added
+
+- **Policy engine** — per-transaction value and gas ceilings, an optional
+  recipient allowlist, a blocklist that beats it, whether the key may deploy,
+  and both a count and a spending budget per window.
+- **Audit log** — one JSON object per line in `data/audit.log`, opened in append
+  mode. Approvals are recorded as well as refusals.
+- `/policy` and `/audit` endpoints, and `eth_accounts` / `eth_signTransaction`.
+
+### Notes
+
+- **Clef was the plan and no longer exists.** `cmd/clef` has been removed from
+  go-ethereum and the binary is absent from the `alltools` image, while its
+  documentation page still describes it as current (last edited December 2022).
+  The policy engine is implemented here instead; signing primitives come from
+  `alloy`.
+- A refused request does not consume the budget, or a flood of rejected requests
+  would become a way to deny service to legitimate ones.
+- Denial beats permission on the recipient lists — the other ordering means
+  adding an address to a blocklist silently does nothing when it is also
+  allowlisted.
+
+---
+
+## [0.3.0] — Phase C: the gateway
+
+Everything now points at the gateway on `8545`; geth moved to `8546` behind it.
+
+### Added
+
+- **Capability-aware routing** — upstreams declare archive, trace and txpool
+  support; resolution is capability → health → weight.
+- **Health detection with automatic recovery** — two consecutive failed probes
+  remove a node, a successful one restores it, and a failed request counts as
+  evidence.
+- **An immutable-response cache** — only answers that cannot change, never
+  anything naming `latest`, `pending`, `safe` or `finalized`.
+- **Per-method rate limits**, stricter for `eth_call`, gas estimation, log
+  queries and tracing.
+- **Prometheus metrics** and `cupel observe`, bringing up Prometheus and Grafana
+  with the datasource and dashboard provisioned.
+
+### Fixed
+
+- Block production returned its error, which unwound `cupel up` and took the
+  gateway down with it — so stopping the node made the gateway unreachable,
+  exactly backwards. Production now reports the stall, retries, and re-reads the
+  head, because a restarted node has its own idea of where the chain is.
+
+---
+
+## [0.2.0] — Phase B: the contract library
+
+### Added
+
+- `Token` (ERC-20 with EIP-2612 permits), `Vault` (ERC-4626) and `Weth`, at
+  fixed addresses whose last digits name the standard.
+- Foundry tests that **perform** the approve race and the ERC-4626 inflation
+  attack rather than describing them, plus permit replay, expiry and
+  cross-chain reuse.
+- `cupel contracts` and `cupel genesis`.
+
+### Notes
+
+- Contracts are placed in genesis as runtime bytecode, never deployed by a
+  transaction, so they exist before the first block and their addresses never
+  move. The cost is that constructors never run, so every contract is written to
+  need no constructor state.
+- The Foundry cheatcode interface is declared locally — no submodules, no
+  network fetch, so a fresh clone tests with nothing installed.
+
+---
+
+## [0.1.0] — Phase A: control plane and block producer
+
+### Added
+
+- `cupel up` / `down` / `reset` / `status`, with health-gated startup and clean
+  teardown.
+- An **Engine API block producer** — `forkchoiceUpdated` → `getPayload` →
+  `newPayload` → `forkchoiceUpdated`, four authenticated calls per block. It is
+  a block producer, not a consensus client: no attestations, no fork choice, no
+  real finality.
+- A post-merge genesis from block zero with four prefunded development accounts.
+
+### Fixed
+
+- Blocks were produced but always empty, with transactions accepted into the
+  pool and never included — no error anywhere. `--miner.gasprice` is the gate,
+  and geth *refuses* a value of zero, logging `Sanitizing invalid miner gas
+  price provided=0 updated=1,000,000`. One wei is the lowest it honours.
+- `--gpo.ignoreprice` made it worse: geth's own fee oracle then suggested a tip
+  beneath its own miner floor, so clients built transactions the node would
+  never mine.
+
+### Notes
+
+- Only `VALID` counts as success from the Engine API. `SYNCING` and `ACCEPTED`
+  are legitimate on a real network and mean something is wrong here.
+- The JWT is regenerated per call, because the `iat` claim is only accepted
+  within a narrow window either side of the node's clock.

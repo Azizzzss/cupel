@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Lints
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --all-features
+
+      - name: Documentation
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  contracts:
+    name: contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Formatting
+        run: forge fmt --check
+        working-directory: contracts
+
+      - name: Tests
+        run: forge test -vv
+        working-directory: contracts
+
+      - name: The committed genesis matches the compiled contracts
+        # A contract changed without regenerating genesis would ship a chain
+        # running last week's bytecode, silently. Rebuilding and regenerating
+        # here must produce no diff.
+        run: |
+          forge build --root contracts
+          cargo run -q -p cupel -- genesis
+          git diff --exit-code config/genesis/genesis.json
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build
+        run: cargo build -p cupel
+
+      - name: Bring up a chain and use it
+        # The real check: not that the code compiles, but that a chain comes up,
+        # produces blocks, carries the contracts, and answers a client.
+        run: |
+          ./target/debug/cupel up > cupel.log 2>&1 &
+          for _ in $(seq 1 90); do
+            grep -q "Producing blocks" cupel.log && break
+            sleep 1
+          done
+          grep -q "Producing blocks" cupel.log || { cat cupel.log; exit 1; }
+
+          RPC=http://127.0.0.1:8545
+          TOKEN=0x00000000000000000000000000000000c0de0020
+          KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+          ME=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+
+          test "$(cast chain-id --rpc-url $RPC)" = "31337"
+          test "$(cast call $TOKEN 'name()(string)' --rpc-url $RPC)" = '"Cupel Token"'
+
+          # Blocks must actually advance, not merely exist.
+          before=$(cast block-number --rpc-url $RPC)
+          sleep 4
+          after=$(cast block-number --rpc-url $RPC)
+          test "$after" -gt "$before"
+
+          # A write, end to end.
+          cast send $TOKEN 'mint(address,uint256)' $ME 1000000000000000000000 \
+            --rpc-url $RPC --private-key $KEY >/dev/null
+          test "$(cast call $TOKEN 'balanceOf(address)(uint256)' $ME --rpc-url $RPC)" \
+            = "1000000000000000000000 [1e21]"
+
+          # The signer refuses what the policy forbids.
+          curl -s -X POST http://127.0.0.1:8550 -H 'content-type: application/json' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"eth_signTransaction","params":[{"from":"0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC","to":"0x0000000000000000000000000000000000000042","value":"0x56bc75e2d63100000","gas":"0x5208"}]}' \
+            | grep -q "refused by policy"
+
+          echo "integration checks passed"
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          cat cupel.log || true
+          docker logs cupel-geth 2>&1 | tail -50 || true
+
+      - name: Tear down
+        if: always()
+        run: ./target/debug/cupel down || true

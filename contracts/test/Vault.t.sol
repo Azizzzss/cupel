@@ -73,11 +73,7 @@ contract VaultTest is Lab {
 
         // The attacker put in 1000 + 1 wei and takes out 1500.
         assertGt(attackerGot, 1_000e18, "the attacker came out ahead");
-        assertEq(
-            attackerGot + victimGot,
-            3_000e18 + 1,
-            "nothing was created, only moved from victim to attacker"
-        );
+        assertEq(attackerGot + victimGot, 3_000e18 + 1, "nothing was created, only moved from victim to attacker");
     }
 
     /// @notice The protection this vault does have.

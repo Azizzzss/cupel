@@ -26,10 +26,7 @@ interface Vm {
     /// Derive an address from a private key.
     function addr(uint256 privateKey) external pure returns (address);
     /// Sign a digest with a private key.
-    function sign(uint256 privateKey, bytes32 digest)
-        external
-        pure
-        returns (uint8 v, bytes32 r, bytes32 s);
+    function sign(uint256 privateKey, bytes32 digest) external pure returns (uint8 v, bytes32 r, bytes32 s);
     /// Set `block.timestamp`.
     function warp(uint256 timestamp) external;
     /// Label an address in traces.

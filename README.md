@@ -1,22 +1,54 @@
 # Cupel
 
-A local Ethereum lab. One command gives you a real chain, running in seconds,
-with nothing to sync and nothing to download.
+**A local Ethereum laboratory.** One command gives you a real chain in about
+eight seconds — no sync, no download — with annotated reference contracts
+already deployed, a gateway in front of it, a signer holding a key under policy,
+and dashboards showing what clients actually experienced.
 
 > A **cupel** is the porous bone-ash vessel used in fire assay. You heat an alloy
 > inside it; the base metals oxidise into the walls, and what remains is the pure
-> metal. It is the tool for finding out what something is actually made of.
+> metal. It is the tool for finding out what something is really made of.
+
+---
+
+## The idea
+
+You want to understand the ERC-20 `approve()` race. Today your options are to
+read a blog post, or to write a mock test that passes and teaches you nothing
+about timing. Neither lets you *watch it happen*.
+
+Cupel is built for that gap. Spin up a chain and the contracts are already there
+at documented addresses — heavily commented, each one marking something that has
+cost real money. Send the two approvals. Watch the spender take both. Read the
+logs. You understand the attack because you performed it.
+
+Every tool nearby is built for a different job:
+
+| | Built for | Why it isn't this |
+|---|---|---|
+| **Anvil · Hardhat Node** | Fast unit tests | One node, no consensus, nothing around it |
+| **Kurtosis** | Client teams testing *clients* | A test harness, not a place to learn contracts |
+| **eth-docker · Sedge** | Staking operations | Points at mainnet; nothing to experiment on |
+| **Blockscout · Otterscan** | Viewing a chain | A component to integrate, not a stack |
+
+Nobody packages a chain as a **laboratory**. That is the whole project.
+
+---
+
+## Try it
 
 ```bash
-cupel up
+cargo run -p cupel --release
 ```
 
 ```
   Cupel v0.1.0
   ---------------------------------------------------
   RPC          http://127.0.0.1:8545
+  Node         http://127.0.0.1:8546 (behind the gateway)
+  Metrics      http://127.0.0.1:8545/metrics
+  Signer       http://127.0.0.1:8550  (policy at /policy, decisions at /audit)
   Chain id     31337
-  Head         0 (0x9b7c14…3f21)
   Block time   1s
 
   Accounts (10000 ETH each)
@@ -24,97 +56,72 @@ cupel up
       0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
   ...
 
+  Contracts
+  Token  0x00000000000000000000000000000000c0de0020
+  Vault  0x00000000000000000000000000000000c0de4626
+  Weth   0x00000000000000000000000000000000c0de0009
+
   Producing blocks. Ctrl-C to stop.
 ```
 
 Point `cast`, `forge`, MetaMask or `viem` at `127.0.0.1:8545` and work.
-
-## Why this exists
-
-Every tool nearby is built for a different job. Anvil and Hardhat Node give you
-an instant chain for unit tests — one node, no network, nothing around it.
-Kurtosis spins up multi-client devnets so client teams can test *clients*.
-eth-docker and Sedge run production nodes for stakers.
-
-None of them is a place to **learn**: somewhere you spin up a real chain and
-immediately have an explorer, a faucet, working oracle feeds, and a shelf of
-annotated ERC implementations already deployed — so you can watch an `approve()`
-race actually happen instead of reading about it.
-
-That is what Cupel is being built into. See [the design document](docs/design.md)
-for the full seven-phase plan.
-
-> **Status: phase D, verified.** A chain comes up in about eight seconds with
-> the reference contracts already deployed, behind a gateway that routes,
-> caches and reports on itself, alongside a signing service that holds a key
-> under a policy. Still to come: the multi-client network, the oracle and the
-> explorer.
-
-## The interesting part
-
-Since the merge, **an execution client cannot make a block on its own.** Geth
-will accept transactions, gossip them and answer queries, then sit at the same
-block forever, because deciding *when* a block happens is the consensus layer's
-job. Geth's own documentation is blunt about it: *"geth is not able to seal
-Ethash or Clique blocks. It only works in PoS mode and in concert with a
-consensus client."*
-
-Running a full beacon client to get one block a second in a lab is
-disproportionate. So Cupel ships [its own block producer](crates/producer): the
-smallest honest thing on the other end of the Engine API.
-
-Each block is four authenticated calls:
-
-| Call | Purpose |
-|---|---|
-| `engine_forkchoiceUpdatedV3` + attributes | build on this head, with this timestamp → returns a payload id |
-| `engine_getPayloadV3` | collect the block the client built |
-| `engine_newPayloadV3` | hand it back for validation |
-| `engine_forkchoiceUpdatedV3` | adopt it as canonical |
-
-**It is a block producer, not a consensus client.** There are no attestations,
-no fork choice and no real finality — every block is declared final immediately,
-because with a single producer there is nothing to disagree with. Anything that
-depends on reorgs or genuine finality needs the multi-client network in phase E,
-not this.
-
-## The contract library
-
-Three contracts exist at block zero on every Cupel chain, at addresses whose
-last digits name the standard:
-
-| | Address | |
-|---|---|---|
-| `Token` | `0x…c0de0020` | ERC-20 with EIP-2612 permits. Anyone may mint. |
-| `Vault` | `0x…c0de4626` | ERC-4626 vault over `Token`, rounding on display. |
-| `Weth` | `0x…c0de0009` | Wrapped ether. |
 
 ```bash
 cast call 0x00000000000000000000000000000000c0de0020 'name()(string)'   # "Cupel Token"
 cast send 0x00000000000000000000000000000000c0de0020 'mint(address,uint256)' $YOU 1000e18
 ```
 
+MetaMask connects at chain id **31337**; import any key above.
+
+---
+
+## What's in the box
+
+| | | Written here |
+|---|---|---|
+| **Control plane** | `cupel up` — health-gated startup, clean teardown | ✅ |
+| **Block producer** | Drives geth over the Engine API, because geth cannot make blocks alone | ✅ |
+| **Contract library** | Annotated ERC-20/Permit, ERC-4626, WETH, deployed in genesis | ✅ |
+| **RPC gateway** | Capability routing, health, failover, caching, metrics | ✅ |
+| **Policy signer** | A held key behind ceilings, allowlists and budgets, with an audit log | ✅ |
+| Execution client | geth | integrated |
+| Monitoring | Prometheus, Grafana | integrated |
+| Signing primitives | `alloy` | integrated |
+
+The line matters: a project that is only compose files and Grafana JSON reads as
+configuration, not engineering. Cupel writes the parts that decide how the lab
+behaves and integrates the parts already better solved.
+
+---
+
+## The contract library
+
+Three contracts exist at block zero, at addresses whose last digits name the
+standard:
+
+| | Address | |
+|---|---|---|
+| `Token` | `0x…c0de0020` | ERC-20 with EIP-2612 permits. Anyone may mint. |
+| `Vault` | `0x…c0de4626` | ERC-4626 over `Token`, rounding on display. |
+| `Weth` | `0x…c0de0009` | Wrapped ether. |
+
 **They are not deployed by a transaction.** Their runtime bytecode is written
-into the genesis file, so they exist at block zero, at addresses chosen in
-advance, with nothing to run first and nothing that can fail halfway. The cost
+into the genesis file, so they exist before the first block, at addresses fixed
+in advance, with nothing to run first and nothing that can fail halfway. The cost
 is that constructors never execute, so every contract is written to need no
-constructor state — supply starts at zero and anyone may mint, and the vault's
-asset address is a constant rather than an argument.
+constructor state — supply starts at zero, the vault's asset is a constant, and
+the EIP-712 domain separator is computed per call rather than cached. That last
+one is better anyway: a cached separator is wrong on any other chain the code is
+later placed on.
 
-Read them for the comments as much as the code. Each one marks something that
-has cost real money, and [the tests](contracts/test) perform the attacks rather
-than describing them:
+[The tests](contracts/test) perform the attacks rather than describing them:
 
-- **The approve race.** Changing a non-zero allowance to another non-zero value
-  is two states with a gap. `test_approveRace_spenderTakesBothAllowances` has a
-  spender front-run the change and take **150** where the owner never intended
-  more than 100 at any moment.
-- **The ERC-4626 inflation attack.** An attacker seeds an empty vault with one
+- **The approve race** — a spender front-runs an allowance change and takes
+  **150** where the owner never intended more than 100 at any moment.
+- **The ERC-4626 inflation attack** — an attacker seeds an empty vault with one
   share, donates assets straight to it so that share's price rockets, and the
-  next depositor's stake is divided by the inflated price and rounded down.
-  `test_inflationAttack_victimLosesValueToTheAttacker` walks the whole thing:
-  the victim pays 2000 and redeems 1500, and the difference is the attacker's.
-  You can reproduce it live in four `cast send` calls.
+  next depositor's stake is divided by the inflated price and rounded down. The
+  victim pays 2000 and redeems 1500. Reproducible live in four `cast send` calls.
 - **Permit replay, expiry and cross-chain reuse**, and why the EIP-712 domain
   carries a chain id.
 
@@ -125,61 +132,59 @@ cd contracts && forge test
 No submodules and no network fetch — the cheatcode interface is declared
 locally, so a fresh clone tests with nothing installed.
 
-To change a contract, edit it, `forge build`, then `cupel genesis` to rewrite
-the allocation and `cupel reset` for a chain that carries it. The generated
-genesis is committed, so a clone needs Solidity only to *change* a contract, not
-to run one.
+To change a contract: edit, `forge build`, `cupel genesis`, `cupel reset`. The
+generated genesis is committed, so a clone needs Solidity only to *change* a
+contract, not to run one.
+
+---
 
 ## The gateway
 
-Everything points at the gateway on `8545`; the gateway points at the nodes.
-That one indirection buys what a bare node cannot give you.
+Everything points at `8545`; the gateway points at the nodes.
 
-**Requests are routed by what they need, not just by what is up.** Each upstream
-declares whether it keeps history, serves `debug_`/`trace_`, and serves
-`txpool_`. Resolution is capability, then health, then weight — capability first
-so that a request nothing can serve produces one clear error rather than a
-confusing failure from a node that was never a candidate. Whether a call needs
-history is judged from its *arguments*: `eth_getBalance` at `latest` asks for
-nothing special, the same call at block `0x5` needs an archive node.
+**Routing is by capability, not just liveness.** Each upstream declares whether
+it keeps history, serves `debug_`/`trace_`, and serves `txpool_`. Resolution is
+capability → health → weight. Capability first, so a request nothing can serve
+gets one clear error rather than a confusing failure from a node that was never a
+candidate. Whether a call needs history is judged from its *arguments*:
+`eth_getBalance` at `latest` asks for nothing special, the same call at block
+`0x5` needs an archive node.
 
-**An upstream that stops answering leaves the rotation and comes back on its
-own.** Two consecutive failed probes take it out — one is usually a blip, and
-removing a node on the first makes the gateway flap under load. A failed request
-counts as evidence too, so a node that dies between probes is noticed
-immediately rather than at the next tick.
+**A node that stops answering leaves the rotation and returns on its own.**
 
 ```bash
 docker stop cupel-geth
-curl -s localhost:8545/health          # 503, up: false
-curl -s -X POST localhost:8545 -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'
+curl -s localhost:8545/health     # 503, up: false
 # {"error":{"code":-32003,"message":"no healthy upstream is available"}}
-docker start cupel-geth                # health recovers by itself
+docker start cupel-geth           # health recovers by itself
 ```
 
-The chain keeps running through this. Block production reports that it stalled,
-retries, re-reads the head — a restarted node has its own idea of where the
-chain is — and resumes on its own.
+Two consecutive failed probes take a node out — one is usually a blip, and
+removing on the first makes a gateway flap under load. A failed *request* counts
+as evidence too, so a node dying between probes is noticed at once. The chain
+keeps running through all of it: block production reports the stall, retries,
+re-reads the head, and resumes.
 
-**Only provably immutable answers are cached.** A block identified by hash
-cannot change; a block identified by `latest` changes every second. The rule is
-narrow by design, because getting it wrong does not show up as a slow gateway,
-it shows up as a client being told something false.
+**Only provably immutable answers are cached.** A block identified by hash cannot
+change; a block identified by `latest` changes every second. Narrow by design —
+getting this wrong does not look like a slow gateway, it looks like a client
+being told something false.
 
 **Expensive methods have their own rate limit.** `eth_call`, gas estimation, log
 queries and tracing cost a node far more than a balance lookup, and a loop
 issuing them is the usual way a local node becomes unresponsive.
 
+---
+
 ## Policy signing
 
-Clients sign for themselves — `cast` and MetaMask hold their own keys and never
-ask anything else. The signer on `:8550` is for the other case: an *application*
-that needs to send transactions, and therefore needs a key it cannot be trusted
-with. The faucet is the obvious example, and it is what phase G will use.
+Clients sign for themselves. The signer on `:8550` is for the other case: an
+*application* that must send transactions, and therefore needs a key it cannot be
+trusted with. The faucet is exactly that shape.
 
-A policy turns "this process was compromised" into "this process was
-compromised and could still only send one ether to two known addresses before
-the rate limit stopped it".
+A policy turns *"this process was compromised"* into *"this process was
+compromised and could still only send one ether to two known addresses before the
+rate limit stopped it"*.
 
 ```bash
 curl -s localhost:8550/policy    # what the key is held under
@@ -196,8 +201,8 @@ rate limit reached: 10 signatures per 60s
 The rules are a per-transaction value ceiling, a gas ceiling, an optional
 recipient allowlist, a blocklist that beats it, whether the key may deploy at
 all, and both a **count and a spending budget** per window — a rate limit alone
-still permits ten transactions of the maximum size, and the budget is what
-bounds the total loss.
+still permits ten transactions of the maximum size, and the budget is what bounds
+the total loss.
 
 **Every decision is recorded, approvals included.** A log holding only refusals
 answers "what was blocked", and the question after an incident is always "what
@@ -205,7 +210,7 @@ was signed". Entries are one JSON object per line in `data/audit.log`, opened in
 append mode so a restart cannot truncate the history.
 
 A refused request does not consume the budget, or a flood of rejected requests
-would become a way to deny service to legitimate ones.
+becomes a way to deny service to legitimate ones.
 
 > **Why not Clef?** It was the obvious thing to integrate, and it no longer
 > exists — `cmd/clef` has been removed from go-ethereum and the binary is absent
@@ -215,22 +220,22 @@ would become a way to deny service to legitimate ones.
 > run a deleted tool, the policy engine is implemented here and the signing
 > primitives come from `alloy`: borrow the cryptography, own the rules.
 
+---
+
 ## Monitoring
 
 ```bash
-cupel observe        # Prometheus and Grafana, provisioned, no login
+cupel observe          # Prometheus and Grafana, provisioned, no login
 cupel observe --down
 ```
 
 Grafana on `:3000` comes up with the dashboard already wired: upstreams
-answering, request rate split by ok/failed/rejected, cache hit ratio, health
-over time, and traffic by method. The metrics come from the gateway rather than
-from geth, deliberately — what matters in a lab is what clients experienced, not
-what the node thinks of itself.
+answering, request rate split ok/failed/rejected, cache hit ratio, health over
+time, traffic by method. Metrics come from the gateway rather than from geth,
+deliberately — what matters in a lab is what clients experienced, not what the
+node thinks of itself.
 
-```bash
-curl -s localhost:8545/metrics
-```
+---
 
 ## Commands
 
@@ -246,49 +251,115 @@ curl -s localhost:8545/metrics
 | `cupel genesis` | rewrite the genesis allocation from the compiled contracts |
 | `cupel observe` | start Prometheus and Grafana against the gateway |
 
-The signer runs alongside the chain on `:8550`; the gateway on `:8545`.
+### Ports
+
+| | |
+|---|---|
+| `8545` | **the gateway** — the only RPC anything should point at |
+| `8546` | geth's own JSON-RPC, behind it |
+| `8550` | the policy signer |
+| `8551` | Engine API, JWT authenticated, localhost only |
+| `3000` / `9090` | Grafana / Prometheus, when `cupel observe` is running |
+
+---
 
 ## Requirements
 
-- Docker, with the daemon running
-- A stable Rust toolchain, 1.91 or newer
+- **Docker**, with the daemon running
+- **Rust** 1.91 or newer
+- **Foundry**, only to change a contract — not to run one
 
 ```bash
-cargo build --release
-./target/release/cupel up
+cargo test --workspace          # 87 tests
+cd contracts && forge test      # 15 tests
 ```
+
+---
 
 ## Design notes
 
+The things that were not obvious, and cost time to find out.
+
 **Lab mode has no history, and that is the point.** A node joining mainnet must
 download and verify ~1.2 TB before it can answer anything. Cupel creates a chain
-at block zero instead — nothing to sync, nothing to store, usable in seconds.
-The trade is that the chain is empty: no Uniswap, no USDC, no mainnet state.
+at block zero instead — nothing to sync, nothing to store, usable in seconds. The
+trade is that the chain is empty: no Uniswap, no USDC, no mainnet state.
 
-**The Engine API is authenticated, and bound to localhost.** Anything that can
-reach port 8551 with the shared secret can dictate what the chain contains. The
+**Geth cannot make blocks on its own.** Since the merge it will accept
+transactions, gossip them and answer queries, then sit at the same block for
+ever, because deciding *when* a block happens is the consensus layer's job.
+Clique has been deprecated since v1.14 and removed. Running a full beacon client
+to get one block a second in a lab is disproportionate, so Cupel ships [its own
+block producer](crates/producer) — four authenticated Engine API calls per block.
+It is a **block producer, not a consensus client**: no attestations, no fork
+choice, no real finality.
+
+**`--miner.gasprice` decides whether anything is mined at all, and it fails
+silently.** Geth's payload builder drops any transaction offering a smaller tip,
+so the transaction is accepted into the pool, reported as pending, and never
+included — blocks keep coming, all of them empty, and nothing anywhere reports an
+error. Worse, geth *refuses* zero: it logs `Sanitizing invalid miner gas price
+provided=0 updated=1,000,000` and raises the floor to 0.001 gwei. One wei is the
+lowest it honours. The matching trap is `--gpo.ignoreprice`: lower it and geth's
+own fee oracle starts suggesting a tip beneath its own miner floor, so clients
+faithfully build transactions the node will never mine.
+
+**A side process must never take the serving path down with it.** Block
+production originally returned its error, which unwound `cupel up` and killed the
+gateway — so stopping the node made the gateway unreachable, which is exactly
+backwards. It now reports the stall, retries, and re-reads the head, because a
+restarted node has its own idea of where the chain is.
+
+**Only `VALID` counts as success** from the Engine API. `SYNCING` and `ACCEPTED`
+are legitimate answers from a client catching up on a real network; here they
+mean something is wrong, and treating them as success would stall the chain while
+appearing to work.
+
+**The Engine API is authenticated and bound to localhost.** Anything that can
+reach `8551` with the shared secret can dictate what the chain contains. The
 secret is generated on first run and never committed.
 
 **The archive node is deliberate.** `--gcmode archive` keeps historical state, so
 `eth_getBalance` at an old block works. On a chain this small it costs nothing,
 and being able to query the past is worth a great deal in a teaching tool.
 
-**Only `VALID` counts as success.** `SYNCING` and `ACCEPTED` are legitimate
-answers from a client that is catching up on a real network. Here they mean
-something is wrong, and treating them as success would silently stall the chain
-while appearing to work.
+---
 
-**`--miner.gasprice` is the flag that decides whether anything gets mined**, and
-it fails silently. Geth's payload builder drops any transaction offering a
-smaller tip than this, so the transaction is accepted into the pool, reported as
-pending, and then never included — blocks keep coming, all of them empty, and
-nothing anywhere reports an error. Worse, geth *refuses* a value of zero: it
-logs `Sanitizing invalid miner gas price provided=0 updated=1,000,000` and
-raises the floor to 0.001 gwei. One wei is the lowest it will honour.
+## Roadmap
 
-The matching trap is `--gpo.ignoreprice`. Lower it and geth's fee oracle starts
-suggesting a tip beneath its own miner floor, so clients faithfully build
-transactions the node will never mine. Cupel leaves it alone.
+| Phase | | Status |
+|---|---|---|
+| **A** | Control plane and Engine API block producer | ✅ `v0.1.0` |
+| **B** | Contract library, deployed in genesis | ✅ `v0.2.0` |
+| **C** | RPC gateway and monitoring | ✅ `v0.3.0` |
+| **D** | Policy signing and audit log | ✅ `v0.4.0` |
+| **E** | Multi-client network — three consensus clients, a bootnode, real finality | next |
+| **F** | Chainlink oracle — a contract reading an off-chain price | planned |
+| **G** | Blockscout and a faucet | planned |
+
+A–D is a complete, usable product on its own. E–G each add a dimension; the
+[design document](docs/design.md) has the full plan, the costs and the risks.
+
+Nothing here is audited or intended for production use. See
+[SECURITY.md](SECURITY.md).
+
+---
+
+## Layout
+
+```
+crates/
+  cupel/       control-plane CLI — the binary
+  producer/    Engine API block producer
+  gateway/     capability-aware JSON-RPC gateway
+  signer/      policy engine, audit log, signing service
+contracts/     Foundry — the annotated reference library
+compose/       lab.yml (the chain), observe.yml (monitoring)
+config/        genesis, Prometheus, Grafana provisioning
+docs/          design document
+```
+
+---
 
 ## Licence
 
