@@ -44,10 +44,11 @@ race actually happen instead of reading about it.
 That is what Cupel is being built into. See [the design document](docs/design.md)
 for the full seven-phase plan.
 
-> **Status: phase C, verified.** A chain comes up in about eight seconds with
+> **Status: phase D, verified.** A chain comes up in about eight seconds with
 > the reference contracts already deployed, behind a gateway that routes,
-> caches and reports on itself. Still to come: policy signing, the multi-client
-> network, the oracle and the explorer.
+> caches and reports on itself, alongside a signing service that holds a key
+> under a policy. Still to come: the multi-client network, the oracle and the
+> explorer.
 
 ## The interesting part
 
@@ -169,6 +170,51 @@ it shows up as a client being told something false.
 queries and tracing cost a node far more than a balance lookup, and a loop
 issuing them is the usual way a local node becomes unresponsive.
 
+## Policy signing
+
+Clients sign for themselves — `cast` and MetaMask hold their own keys and never
+ask anything else. The signer on `:8550` is for the other case: an *application*
+that needs to send transactions, and therefore needs a key it cannot be trusted
+with. The faucet is the obvious example, and it is what phase G will use.
+
+A policy turns "this process was compromised" into "this process was
+compromised and could still only send one ether to two known addresses before
+the rate limit stopped it".
+
+```bash
+curl -s localhost:8550/policy    # what the key is held under
+curl -s localhost:8550/audit     # what it has decided lately
+```
+
+```
+value 100000000000000000000 exceeds the ceiling of 1000000000000000000 wei
+this key may not deploy contracts
+no key held for 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+rate limit reached: 10 signatures per 60s
+```
+
+The rules are a per-transaction value ceiling, a gas ceiling, an optional
+recipient allowlist, a blocklist that beats it, whether the key may deploy at
+all, and both a **count and a spending budget** per window — a rate limit alone
+still permits ten transactions of the maximum size, and the budget is what
+bounds the total loss.
+
+**Every decision is recorded, approvals included.** A log holding only refusals
+answers "what was blocked", and the question after an incident is always "what
+was signed". Entries are one JSON object per line in `data/audit.log`, opened in
+append mode so a restart cannot truncate the history.
+
+A refused request does not consume the budget, or a flood of rejected requests
+would become a way to deny service to legitimate ones.
+
+> **Why not Clef?** It was the obvious thing to integrate, and it no longer
+> exists — `cmd/clef` has been removed from go-ethereum and the binary is absent
+> from the `alltools` image, though [the documentation
+> page](https://geth.ethereum.org/docs/tools/clef/introduction) still describes
+> it as current (last edited December 2022). Rather than pin an ancient geth to
+> run a deleted tool, the policy engine is implemented here and the signing
+> primitives come from `alloy`: borrow the cryptography, own the rules.
+
 ## Monitoring
 
 ```bash
@@ -199,6 +245,8 @@ curl -s localhost:8545/metrics
 | `cupel contracts` | list the reference contracts and their addresses |
 | `cupel genesis` | rewrite the genesis allocation from the compiled contracts |
 | `cupel observe` | start Prometheus and Grafana against the gateway |
+
+The signer runs alongside the chain on `:8550`; the gateway on `:8545`.
 
 ## Requirements
 

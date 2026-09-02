@@ -17,6 +17,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use cupel_gateway::{Config as GatewayConfig, Gateway, Upstream};
 use cupel_producer::{Config, Head, Producer, generate_jwt_secret, parse_jwt_secret};
+use cupel_signer::{Config as SignerConfig, Policy, Signer};
 use tokio::process::Command;
 
 /// Accounts every Ethereum development tool already knows, so a wallet can be
@@ -50,6 +51,13 @@ const ENGINE_URL: &str = "http://127.0.0.1:8551";
 /// Where everything else points.
 const GATEWAY_ADDR: &str = "127.0.0.1:8545";
 const GATEWAY_URL: &str = "http://127.0.0.1:8545";
+/// The signing service. 8550 is the port Clef used to hold, which is where
+/// anyone looking for a signer will think to look.
+const SIGNER_ADDR: &str = "127.0.0.1:8550";
+const SIGNER_URL: &str = "http://127.0.0.1:8550";
+/// Account 2 is the signer's own key. Keeping it distinct from account 0 makes
+/// it obvious in a trace which transactions the service sent.
+const TREASURY: usize = 2;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -179,12 +187,27 @@ async fn up(root: &Path, block_time: u64, keep: bool) -> Result<()> {
     let serving = tokio::spawn(cupel_gateway::serve(Arc::clone(&gateway), address));
     let probing = tokio::spawn(Arc::clone(&gateway).probe_forever());
 
+    // The signing service holds one key under a policy. Nothing in the lab is
+    // obliged to use it -- cast and MetaMask sign for themselves -- but it is
+    // what an application should be given instead of a raw key.
+    let signer = Arc::new(Signer::new(
+        SignerConfig {
+            chain_id: 31337,
+            audit_path: Some(root.join("data/audit.log")),
+            policy: Policy::default(),
+        },
+        &[DEV_ACCOUNTS[TREASURY].1.to_string()],
+    )?);
+    let signer_address: SocketAddr = SIGNER_ADDR.parse().expect("a constant address parses");
+    let signing = tokio::spawn(cupel_signer::serve(Arc::clone(&signer), signer_address));
+
     banner(&head, block_time);
 
     let result = produce_until_interrupted(&producer, &mut head).await;
 
     serving.abort();
     probing.abort();
+    signing.abort();
 
     if keep {
         println!("\ncupel: leaving the container running (--keep)");
@@ -283,6 +306,7 @@ async fn observe(root: &Path, down: bool) -> Result<()> {
     println!("  Grafana      http://127.0.0.1:3000");
     println!("  Prometheus   http://127.0.0.1:9090");
     println!("  Metrics      {GATEWAY_URL}/metrics");
+    println!("  Signer       {SIGNER_URL}  (policy at /policy, decisions at /audit)");
     println!();
     println!("  The dashboard is provisioned; no login needed.");
     println!();
@@ -391,6 +415,7 @@ fn banner(head: &Head, block_time: u64) {
     println!("  RPC          {GATEWAY_URL}");
     println!("  Node         {NODE_RPC_URL} (behind the gateway)");
     println!("  Metrics      {GATEWAY_URL}/metrics");
+    println!("  Signer       {SIGNER_URL}  (policy at /policy, decisions at /audit)");
     println!("  Chain id     31337");
     println!("  Head         {} ({})", head.number, short(&head.hash));
     println!("  Block time   {block_time}s");

@@ -1,0 +1,20 @@
+[package]
+name = "cupel-signer"
+description = "A signing service with a policy engine and an audit log"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy = { version = "2.1.1", features = ["signer-local", "consensus", "eips", "rpc-types"] }
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true

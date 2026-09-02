@@ -97,6 +97,9 @@ not engineering. This is the line.
   sleeping, deploys and seeds, tears down cleanly
 - **Engine API block producer** — `forkchoiceUpdated` → `getPayload` →
   `newPayload` on a timer; removes the consensus-client dependency from lab mode
+- **Policy signer** — a held key behind value ceilings, recipient lists, and
+  windowed count and spend limits, with an append-only audit log. Replaces Clef,
+  which has been removed from go-ethereum
 - **RPC gateway** — capability-aware routing, failover, circuit breaking,
   per-method rate limits, caching, metrics
 - **Contract library** — annotated ERC implementations with Foundry tests, each
@@ -105,8 +108,8 @@ not engineering. This is the line.
 
 **Integrated**
 
-geth · Lighthouse, Prysm, Teku · Clef · Chainlink · Prometheus, Grafana ·
-Blockscout · Postgres
+geth · Lighthouse, Prysm, Teku · alloy (signing primitives) · Chainlink ·
+Prometheus, Grafana · Blockscout · Postgres
 
 ## Gateway: a list and a capability set, never a singleton
 
@@ -159,7 +162,7 @@ and the capabilities — never over the protocol.
 | 8546 | geth JSON-RPC, per node | internal |
 | 8551 | Engine API, JWT authenticated | internal |
 | 30303 | devp2p, per node | internal |
-| 8550 | Clef signer | internal |
+| 8550 | Policy signer | internal |
 | 5052 | Consensus client beacon API | internal |
 | 3000 | Grafana | yes |
 | 4000 | Blockscout | yes |
@@ -176,7 +179,7 @@ tag — that discipline is what stops month seven from being "still not demoable
 | **A** | Control plane and block producer | one command, a chain making blocks, cast connects | light |
 | **B** | Contract library — ERC-20/Permit, 721, 1155, 4626, UUPS, WETH, Multicall3 | `cupel contracts`, then call any of them | light |
 | **C** | Gateway and observability | kill an upstream, watch failover on the dashboard | light |
-| **D** | Policy signing with Clef | a transaction refused by policy, and the log proving why | light |
+| **D** | Policy signing — a key held behind a rules engine | a transaction refused by policy, and the log proving why | light |
 | **E** | The real network — 3 clients, bootnode, both discovery layers | three clients reaching finality; stop one, the rest continue | heavy |
 | **F** | Oracle — Chainlink node, LINK, Operator, a job | a contract reads an off-chain price | heavy |
 | **G** | Explorer and faucet | click through your own blocks in a browser | medium |
