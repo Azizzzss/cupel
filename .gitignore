@@ -1,0 +1,21 @@
+/target
+**/*.rs.bk
+
+# The Engine API secret is generated on first run, never committed.
+config/genesis/jwt.hex
+
+# node / explorer
+node_modules/
+.next/
+dist/
+.env
+.env.local
+
+# foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# chain data
+data/
+*.db

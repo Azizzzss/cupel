@@ -1,0 +1,22 @@
+[package]
+name = "cupel"
+description = "Control plane for the Cupel local Ethereum lab"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "cupel"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+cupel-producer = { path = "../producer" }
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+tokio.workspace = true

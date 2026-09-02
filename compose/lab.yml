@@ -1,0 +1,74 @@
+# Lab mode: a single execution node, driven by the block producer Cupel runs
+# on the host. No consensus client, no sync, no history to download — the chain
+# is created at block zero the moment this comes up.
+name: cupel
+
+services:
+  geth:
+    image: ethereum/client-go:stable
+    container_name: cupel-geth
+    restart: unless-stopped
+
+    # The datadir is initialised from genesis on first boot only. Doing it here
+    # rather than in a separate init container keeps `cupel up` to one step and
+    # makes a restart idempotent.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ ! -d /data/geth ]; then
+          echo "cupel: initialising chain from genesis"
+          geth --state.scheme=hash init --datadir /data /config/genesis.json || exit 1
+        fi
+        exec geth \
+          --datadir /data \
+          --networkid 31337 \
+          --http \
+          --http.addr 0.0.0.0 \
+          --http.port 8545 \
+          --http.api eth,net,web3,debug,txpool \
+          --http.corsdomain '*' \
+          --http.vhosts '*' \
+          --ws \
+          --ws.addr 0.0.0.0 \
+          --ws.port 8546 \
+          --ws.api eth,net,web3,debug,txpool \
+          --ws.origins '*' \
+          --authrpc.addr 0.0.0.0 \
+          --authrpc.port 8551 \
+          --authrpc.vhosts '*' \
+          --authrpc.jwtsecret /config/jwt.hex \
+          --nodiscover \
+          --maxpeers 0 \
+          --syncmode full \
+          --gcmode archive \
+          --state.scheme hash \
+          --verbosity 2
+
+    ports:
+      # Execution JSON-RPC. In later phases the gateway takes 8545 and this
+      # moves behind it.
+      - "127.0.0.1:8545:8545"
+      - "127.0.0.1:8546:8546"
+      # Engine API. Bound to localhost only: anything that can reach this port
+      # with the JWT can make blocks.
+      - "127.0.0.1:8551:8551"
+
+    volumes:
+      - ../config/genesis:/config:ro
+      - geth-data:/data
+
+    healthcheck:
+      # `eth_chainId` is the cheapest call that proves the RPC is actually
+      # serving rather than merely listening.
+      test:
+        - CMD-SHELL
+        - >-
+          geth attach --exec 'eth.chainId()' /data/geth.ipc > /dev/null 2>&1 || exit 1
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
+volumes:
+  geth-data:
+    name: cupel-geth-data
