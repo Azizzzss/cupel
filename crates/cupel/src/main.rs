@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+mod contracts;
+
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use cupel_producer::{Config, Head, Producer, generate_jwt_secret, parse_jwt_secret};
@@ -73,6 +75,13 @@ enum Commands {
     Reset,
     /// Report whether the chain is up, and where it has got to.
     Status,
+    /// List the reference contracts and the addresses they live at.
+    Contracts,
+    /// Rewrite the genesis file from the compiled contracts.
+    ///
+    /// Only needed after changing a contract; the result is committed so a
+    /// clone needs no Solidity toolchain to bring a chain up.
+    Genesis,
 }
 
 #[tokio::main]
@@ -93,6 +102,16 @@ async fn main() -> Result<()> {
         Commands::Down => down(&root, false).await,
         Commands::Reset => down(&root, true).await,
         Commands::Status => status(&root).await,
+        Commands::Contracts => {
+            contracts::print_table();
+            Ok(())
+        }
+        Commands::Genesis => {
+            let count = contracts::regenerate_genesis(&root)?;
+            println!("cupel: wrote {count} contracts into the genesis allocation");
+            println!("cupel: run `cupel reset` for a chain that carries them");
+            Ok(())
+        }
     }
 }
 
@@ -299,6 +318,11 @@ fn banner(head: &Head, block_time: u64) {
     }
     println!();
     println!("  These keys are public. Never use them on a real network.");
+    println!();
+    println!("  Contracts");
+    for contract in contracts::CONTRACTS {
+        println!("  {:<6} {}", contract.name, contract.address);
+    }
     println!();
     println!("  Producing blocks. Ctrl-C to stop.");
     println!();

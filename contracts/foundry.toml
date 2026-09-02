@@ -1,0 +1,18 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = []
+solc_version = "0.8.28"
+optimizer = true
+optimizer_runs = 200
+# Deterministic output: the deployed bytecode is baked into the genesis file,
+# so a rebuild that changes it must be a deliberate act, not a surprise.
+bytecode_hash = "none"
+cbor_metadata = false
+
+[lint]
+# These fire on names the standards mandate: ERC-20 requires lowercase `name`,
+# `symbol` and `decimals`, and EIP-2612 requires `DOMAIN_SEPARATOR`. Renaming
+# them to satisfy a style rule would break every client that reads them.
+exclude_lints = ["screaming-snake-case-const", "interface-naming", "mixed-case-function"]

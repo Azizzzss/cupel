@@ -44,11 +44,10 @@ race actually happen instead of reading about it.
 That is what Cupel is being built into. See [the design document](docs/design.md)
 for the full seven-phase plan.
 
-> **Status: phase A, verified.** `cupel up` brings a chain online in about eight
-> seconds, produces blocks on a timer, and `cast send` lands a transfer that
-> moves real balances. Historical state queries work. Everything else in the
-> plan — the contract library, the gateway, policy signing, the multi-client
-> network, the oracle and the explorer — is not built yet.
+> **Status: phase B, verified.** A chain comes up in about eight seconds with
+> the reference contracts already deployed, and `cast` drives them. Still to
+> come: the gateway, policy signing, the multi-client network, the oracle and
+> the explorer.
 
 ## The interesting part
 
@@ -78,6 +77,58 @@ because with a single producer there is nothing to disagree with. Anything that
 depends on reorgs or genuine finality needs the multi-client network in phase E,
 not this.
 
+## The contract library
+
+Three contracts exist at block zero on every Cupel chain, at addresses whose
+last digits name the standard:
+
+| | Address | |
+|---|---|---|
+| `Token` | `0x…c0de0020` | ERC-20 with EIP-2612 permits. Anyone may mint. |
+| `Vault` | `0x…c0de4626` | ERC-4626 vault over `Token`, rounding on display. |
+| `Weth` | `0x…c0de0009` | Wrapped ether. |
+
+```bash
+cast call 0x00000000000000000000000000000000c0de0020 'name()(string)'   # "Cupel Token"
+cast send 0x00000000000000000000000000000000c0de0020 'mint(address,uint256)' $YOU 1000e18
+```
+
+**They are not deployed by a transaction.** Their runtime bytecode is written
+into the genesis file, so they exist at block zero, at addresses chosen in
+advance, with nothing to run first and nothing that can fail halfway. The cost
+is that constructors never execute, so every contract is written to need no
+constructor state — supply starts at zero and anyone may mint, and the vault's
+asset address is a constant rather than an argument.
+
+Read them for the comments as much as the code. Each one marks something that
+has cost real money, and [the tests](contracts/test) perform the attacks rather
+than describing them:
+
+- **The approve race.** Changing a non-zero allowance to another non-zero value
+  is two states with a gap. `test_approveRace_spenderTakesBothAllowances` has a
+  spender front-run the change and take **150** where the owner never intended
+  more than 100 at any moment.
+- **The ERC-4626 inflation attack.** An attacker seeds an empty vault with one
+  share, donates assets straight to it so that share's price rockets, and the
+  next depositor's stake is divided by the inflated price and rounded down.
+  `test_inflationAttack_victimLosesValueToTheAttacker` walks the whole thing:
+  the victim pays 2000 and redeems 1500, and the difference is the attacker's.
+  You can reproduce it live in four `cast send` calls.
+- **Permit replay, expiry and cross-chain reuse**, and why the EIP-712 domain
+  carries a chain id.
+
+```bash
+cd contracts && forge test
+```
+
+No submodules and no network fetch — the cheatcode interface is declared
+locally, so a fresh clone tests with nothing installed.
+
+To change a contract, edit it, `forge build`, then `cupel genesis` to rewrite
+the allocation and `cupel reset` for a chain that carries it. The generated
+genesis is committed, so a clone needs Solidity only to *change* a contract, not
+to run one.
+
 ## Commands
 
 | | |
@@ -88,6 +139,8 @@ not this.
 | `cupel down` | stop the chain, keep its data |
 | `cupel reset` | stop the chain and delete its data |
 | `cupel status` | is it up, and where has it got to |
+| `cupel contracts` | list the reference contracts and their addresses |
+| `cupel genesis` | rewrite the genesis allocation from the compiled contracts |
 
 ## Requirements
 
