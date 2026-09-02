@@ -345,13 +345,15 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
     println!("cupel: starting the bootnode and node 1");
     compose(root, &[], &["up", "-d", "--wait"]).await?;
 
-    println!("cupel: waiting for node 1's beacon node");
-    let (enr, address) = wait_for_identity().await?;
     let path = dir.join("network.env");
     let mut env = parse_env(&std::fs::read_to_string(&path)?);
-    env.insert("CL_BOOTNODE".into(), enr);
-    env.insert("CL_STATIC_PEER".into(), address);
-    std::fs::write(&path, render_env(&env))?;
+    if needs_identity(&env) {
+        println!("cupel: waiting for node 1's beacon node");
+        let (enr, address) = wait_for_identity().await?;
+        env.insert("CL_BOOTNODE".into(), enr);
+        env.insert("CL_STATIC_PEER".into(), address);
+        std::fs::write(&path, render_env(&env))?;
+    }
 
     println!("cupel: starting nodes 2 and 3");
     compose(root, &["--profile", "peers"], &["up", "-d"]).await?;
@@ -389,6 +391,23 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
     serving.abort();
     probing.abort();
     Ok(())
+}
+
+/// Whether node 1's identity still has to be fetched.
+///
+/// Only when it is missing. Node 1's identity survives its own restarts — same
+/// key, same address, same ports — and all that moves is the ENR's sequence
+/// number, which a peer bootstrapping from an older record simply refreshes.
+///
+/// Re-fetching it on every `up` looks harmless and is not: the new value goes
+/// into the file compose interpolates, compose sees changed configuration for
+/// nodes 2 and 3, and recreates them. Recreating a consensus client drops every
+/// peer it had, so running `cupel network up` twice took the consensus layer
+/// apart and left one client unable to find anyone at all.
+fn needs_identity(env: &BTreeMap<String, String>) -> bool {
+    ["CL_BOOTNODE", "CL_STATIC_PEER"]
+        .iter()
+        .any(|key| env.get(*key).is_none_or(String::is_empty))
 }
 
 /// Stop the devnet, optionally deleting every chain it produced.
@@ -787,6 +806,25 @@ mod tests {
     fn subnets_that_are_not_172_are_ignored() {
         assert_eq!(free_subnet(&["10.0.0.0/8".to_string()]), Some(24));
         assert_eq!(free_subnet(&["fd00::/64".to_string()]), Some(24));
+    }
+
+    #[test]
+    fn node_ones_identity_is_fetched_once_and_then_kept() {
+        let mut env = BTreeMap::new();
+        assert!(needs_identity(&env), "nothing known yet");
+
+        env.insert("CL_BOOTNODE".into(), String::new());
+        env.insert("CL_STATIC_PEER".into(), String::new());
+        assert!(needs_identity(&env), "written but empty is still not known");
+
+        env.insert("CL_BOOTNODE".into(), "enr:-Oy4Q...".into());
+        assert!(needs_identity(&env), "half of it is not enough");
+
+        env.insert(
+            "CL_STATIC_PEER".into(),
+            "/ip4/172.24.0.21/tcp/9000/p2p/16U".into(),
+        );
+        assert!(!needs_identity(&env), "both known — leave the file alone");
     }
 
     #[test]

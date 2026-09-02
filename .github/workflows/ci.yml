@@ -129,7 +129,7 @@ jobs:
     # know that three consensus clients still agree after a dependency moves.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -139,6 +139,25 @@ jobs:
       - name: Build
         run: cargo build -p cupel
 
+      - name: Pull the client images first
+        # Genesis is stamped the moment `network up` generates it, and the
+        # beacon chain starts thirty seconds later whether or not the clients
+        # are running. Pulling four images afterwards would burn the first
+        # epochs with a third of the validators offline, and epochs with less
+        # than two thirds voting do not justify — so the chain would take twice
+        # as long to finalise, or not finalise inside the timeout at all.
+        run: |
+          for image in ethpandaops/ethereum-genesis-generator:6.2.1 \
+                       ethereum/client-go:stable \
+                       ethereum/client-go:alltools-stable \
+                       sigp/lighthouse:latest \
+                       gcr.io/offchainlabs/prysm/beacon-chain:latest \
+                       gcr.io/offchainlabs/prysm/validator:latest \
+                       consensys/teku:latest \
+                       alpine; do
+            docker pull -q "$image"
+          done
+
       - name: Bring up the devnet
         run: ./target/debug/cupel network up --detach
 
@@ -146,7 +165,7 @@ jobs:
         # Finality is the whole claim of this mode. Two thirds of the stake must
         # agree, and the stake is split so that no single node holds it.
         run: |
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 120); do
             # A failed request yields an empty string, and an empty string is
             # not "0" — testing for inequality would report a chain that never
             # answered as a chain that finalised. Insist on a positive integer.
@@ -157,7 +176,7 @@ jobs:
             if [ "$epoch" -gt 0 ]; then exit 0; fi
             sleep 10
           done
-          echo "no finalised epoch after fifteen minutes"
+          echo "no finalised epoch after twenty minutes"
           exit 1
 
       - name: All three clients agree

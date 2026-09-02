@@ -377,6 +377,12 @@ services:
       # bootnode record in its configuration. A known address is deterministic.
       - --p2p-static-peers=${CL_STATIC_PEER}
       - --p2p-subscribe-all-subnets-enabled=true
+      # Teku's equivalent of --supernode: custody every data column rather than
+      # the share its stake entitles it to. Without it Teku advertised a custody
+      # group count of 21 while Lighthouse and Prysm advertised 128, and a
+      # three-node network cannot afford one member holding a seventh of the
+      # data the other two expect to fetch from it.
+      - --p2p-subscribe-all-custody-subnets-enabled=true
       - --validator-keys=/keys/teku-keys:/keys/teku-secrets
       # Teku writes a .lock beside each keystore and refuses to start if one is
       # already there. A container that is killed rather than stopped leaves

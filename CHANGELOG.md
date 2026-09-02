@@ -58,6 +58,18 @@ validators and a chain that finalises.
 - The workspace version had stayed at `0.1.0` through four tagged releases, so
   `cupel --version` reported `0.1.0` on all of them. It is `0.5.0` now, and
   bumping it belongs in the same commit as the tag.
+- **`network up` was not idempotent.** It re-read node 1's ENR every time and
+  wrote it back, and an ENR's sequence number moves constantly — so compose saw
+  changed configuration for nodes 2 and 3 and recreated them. Recreating a
+  consensus client drops every peer it had. Running the command twice therefore
+  took the consensus layer apart. The identity is now fetched only when it is
+  not already known, which is correct because node 1 keeps its key, address and
+  ports across restarts and a stale sequence number still bootstraps.
+- **Teku custodied a seventh of the data columns the other two expected.** It
+  advertised `custody_group_count: 21` against Lighthouse's and Prysm's 128,
+  because `--p2p-subscribe-all-custody-subnets-enabled` is separate from
+  `--p2p-subscribe-all-subnets-enabled`. With it set, the chain went from a
+  missed slot every ten or so to none at all.
 
 ---
 
