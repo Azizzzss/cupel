@@ -1,0 +1,57 @@
+# Monitoring. Opt-in, and separate from the chain on purpose: it should be
+# possible to run the lab without paying for a metrics stack, and to restart the
+# dashboards without disturbing a running chain.
+#
+#   cupel observe          start it
+#   cupel observe --down   stop it
+name: cupel-observe
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cupel-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=6h
+      # A lab does not need weeks of history, and a small retention keeps the
+      # volume from growing quietly in the background.
+      - --web.enable-lifecycle
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ../config/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    # The gateway runs on the host, not in a container, so Prometheus has to be
+    # told how to reach back out. Docker Desktop provides this name already;
+    # the mapping makes it work on plain Linux Docker too.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cupel-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      # Anonymous access with an editor role: this is a local lab, and a login
+      # prompt between you and a dashboard is friction with no security value
+      # on an interface bound to localhost.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: dark
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/cupel.json
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ../config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  prometheus-data:
+    name: cupel-prometheus-data
+  grafana-data:
+    name: cupel-grafana-data

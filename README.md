@@ -44,10 +44,10 @@ race actually happen instead of reading about it.
 That is what Cupel is being built into. See [the design document](docs/design.md)
 for the full seven-phase plan.
 
-> **Status: phase B, verified.** A chain comes up in about eight seconds with
-> the reference contracts already deployed, and `cast` drives them. Still to
-> come: the gateway, policy signing, the multi-client network, the oracle and
-> the explorer.
+> **Status: phase C, verified.** A chain comes up in about eight seconds with
+> the reference contracts already deployed, behind a gateway that routes,
+> caches and reports on itself. Still to come: policy signing, the multi-client
+> network, the oracle and the explorer.
 
 ## The interesting part
 
@@ -129,6 +129,63 @@ the allocation and `cupel reset` for a chain that carries it. The generated
 genesis is committed, so a clone needs Solidity only to *change* a contract, not
 to run one.
 
+## The gateway
+
+Everything points at the gateway on `8545`; the gateway points at the nodes.
+That one indirection buys what a bare node cannot give you.
+
+**Requests are routed by what they need, not just by what is up.** Each upstream
+declares whether it keeps history, serves `debug_`/`trace_`, and serves
+`txpool_`. Resolution is capability, then health, then weight — capability first
+so that a request nothing can serve produces one clear error rather than a
+confusing failure from a node that was never a candidate. Whether a call needs
+history is judged from its *arguments*: `eth_getBalance` at `latest` asks for
+nothing special, the same call at block `0x5` needs an archive node.
+
+**An upstream that stops answering leaves the rotation and comes back on its
+own.** Two consecutive failed probes take it out — one is usually a blip, and
+removing a node on the first makes the gateway flap under load. A failed request
+counts as evidence too, so a node that dies between probes is noticed
+immediately rather than at the next tick.
+
+```bash
+docker stop cupel-geth
+curl -s localhost:8545/health          # 503, up: false
+curl -s -X POST localhost:8545 -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}'
+# {"error":{"code":-32003,"message":"no healthy upstream is available"}}
+docker start cupel-geth                # health recovers by itself
+```
+
+The chain keeps running through this. Block production reports that it stalled,
+retries, re-reads the head — a restarted node has its own idea of where the
+chain is — and resumes on its own.
+
+**Only provably immutable answers are cached.** A block identified by hash
+cannot change; a block identified by `latest` changes every second. The rule is
+narrow by design, because getting it wrong does not show up as a slow gateway,
+it shows up as a client being told something false.
+
+**Expensive methods have their own rate limit.** `eth_call`, gas estimation, log
+queries and tracing cost a node far more than a balance lookup, and a loop
+issuing them is the usual way a local node becomes unresponsive.
+
+## Monitoring
+
+```bash
+cupel observe        # Prometheus and Grafana, provisioned, no login
+cupel observe --down
+```
+
+Grafana on `:3000` comes up with the dashboard already wired: upstreams
+answering, request rate split by ok/failed/rejected, cache hit ratio, health
+over time, and traffic by method. The metrics come from the gateway rather than
+from geth, deliberately — what matters in a lab is what clients experienced, not
+what the node thinks of itself.
+
+```bash
+curl -s localhost:8545/metrics
+```
+
 ## Commands
 
 | | |
@@ -141,6 +198,7 @@ to run one.
 | `cupel status` | is it up, and where has it got to |
 | `cupel contracts` | list the reference contracts and their addresses |
 | `cupel genesis` | rewrite the genesis allocation from the compiled contracts |
+| `cupel observe` | start Prometheus and Grafana against the gateway |
 
 ## Requirements
 

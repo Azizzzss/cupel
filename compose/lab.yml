@@ -66,10 +66,11 @@ services:
           --verbosity 2
 
     ports:
-      # Execution JSON-RPC. In later phases the gateway takes 8545 and this
-      # moves behind it.
-      - "127.0.0.1:8545:8545"
-      - "127.0.0.1:8546:8546"
+      # The node's own JSON-RPC sits behind the gateway, which holds 8545. It is
+      # still published so the producer can drive block production directly and
+      # so a problem can be diagnosed without the gateway in the way.
+      - "127.0.0.1:8546:8545"
+      - "127.0.0.1:8547:8546"
       # Engine API. Bound to localhost only: anything that can reach this port
       # with the JWT can make blocks.
       - "127.0.0.1:8551:8551"

@@ -5,14 +5,17 @@
 //! blocks runs here, because since the merge an execution client will not make
 //! one on its own.
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 mod contracts;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use cupel_gateway::{Config as GatewayConfig, Gateway, Upstream};
 use cupel_producer::{Config, Head, Producer, generate_jwt_secret, parse_jwt_secret};
 use tokio::process::Command;
 
@@ -39,8 +42,14 @@ const DEV_ACCOUNTS: [(&str, &str); 4] = [
     ),
 ];
 
-const RPC_URL: &str = "http://127.0.0.1:8545";
+/// The node's own JSON-RPC. The producer talks to it directly rather than
+/// through the gateway: block production is not client traffic, and it must
+/// keep working while the gateway is rate-limiting or refusing requests.
+const NODE_RPC_URL: &str = "http://127.0.0.1:8546";
 const ENGINE_URL: &str = "http://127.0.0.1:8551";
+/// Where everything else points.
+const GATEWAY_ADDR: &str = "127.0.0.1:8545";
+const GATEWAY_URL: &str = "http://127.0.0.1:8545";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -77,6 +86,12 @@ enum Commands {
     Status,
     /// List the reference contracts and the addresses they live at.
     Contracts,
+    /// Start Prometheus and Grafana against the gateway's metrics.
+    Observe {
+        /// Stop them instead.
+        #[arg(long)]
+        down: bool,
+    },
     /// Rewrite the genesis file from the compiled contracts.
     ///
     /// Only needed after changing a contract; the result is committed so a
@@ -106,6 +121,7 @@ async fn main() -> Result<()> {
             contracts::print_table();
             Ok(())
         }
+        Commands::Observe { down } => observe(&root, down).await,
         Commands::Genesis => {
             let count = contracts::regenerate_genesis(&root)?;
             println!("cupel: wrote {count} contracts into the genesis allocation");
@@ -138,7 +154,7 @@ async fn up(root: &Path, block_time: u64, keep: bool) -> Result<()> {
 
     let producer = Producer::new(Config {
         engine_url: ENGINE_URL.to_string(),
-        rpc_url: RPC_URL.to_string(),
+        rpc_url: NODE_RPC_URL.to_string(),
         jwt_secret: secret,
         fee_recipient: DEV_ACCOUNTS[0].0.to_string(),
         block_time: Duration::from_secs(block_time),
@@ -149,9 +165,26 @@ async fn up(root: &Path, block_time: u64, keep: bool) -> Result<()> {
     // answering us over the published port, so confirm that ourselves before
     // claiming the chain is up.
     let mut head = wait_for_rpc(&producer).await?;
+
+    // The gateway fronts the node on 8545. It runs in this process rather than
+    // a container so there is one binary to rebuild while iterating, and so it
+    // shares a lifetime with the chain it is fronting.
+    let gateway = Arc::new(Gateway::new(
+        GatewayConfig::default(),
+        vec![Upstream::new("geth", NODE_RPC_URL)],
+    ));
+    gateway.probe_once().await;
+
+    let address: SocketAddr = GATEWAY_ADDR.parse().expect("a constant address parses");
+    let serving = tokio::spawn(cupel_gateway::serve(Arc::clone(&gateway), address));
+    let probing = tokio::spawn(Arc::clone(&gateway).probe_forever());
+
     banner(&head, block_time);
 
     let result = produce_until_interrupted(&producer, &mut head).await;
+
+    serving.abort();
+    probing.abort();
 
     if keep {
         println!("\ncupel: leaving the container running (--keep)");
@@ -163,17 +196,31 @@ async fn up(root: &Path, block_time: u64, keep: bool) -> Result<()> {
 }
 
 /// Produce blocks on a fixed interval until Ctrl-C.
+///
+/// A failure here is reported and retried, never fatal. The node going away is
+/// a normal thing to survive — it is exactly when the gateway is most useful,
+/// answering with a clear error instead of a refused connection — and killing
+/// the whole process because one block could not be built would take the
+/// gateway down with it.
 async fn produce_until_interrupted(producer: &Producer, head: &mut Head) -> Result<()> {
     let mut ticker = tokio::time::interval(producer.config().block_time);
     // Blocks are produced on a schedule; falling behind should not cause a
     // burst of catch-up blocks with near-identical timestamps.
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut stalled = 0u32;
 
     loop {
         tokio::select! {
             _ = ticker.tick() => {
                 match producer.produce_block(head).await {
                     Ok(block) => {
+                        if stalled > 0 {
+                            println!(
+                                "  resumed at block {} after {stalled} missed",
+                                block.head.number
+                            );
+                            stalled = 0;
+                        }
                         *head = block.head.clone();
                         if block.transactions > 0 {
                             println!(
@@ -186,8 +233,20 @@ async fn produce_until_interrupted(producer: &Producer, head: &mut Head) -> Resu
                         }
                     }
                     Err(error) => {
-                        eprintln!("cupel: block production failed: {error}");
-                        return Err(error.into());
+                        // Say it once rather than every second, so a node that
+                        // is down for a while does not bury the terminal.
+                        if stalled == 0 {
+                            eprintln!("  block production stalled: {error}");
+                        }
+                        stalled += 1;
+
+                        // A node that restarted has its own idea of the head,
+                        // and the one held here is stale — every further build
+                        // request would be refused. Re-read it so production
+                        // resumes by itself once the node is back.
+                        if let Ok(current) = producer.current_head().await {
+                            *head = current;
+                        }
                     }
                 }
             }
@@ -211,6 +270,25 @@ async fn down(root: &Path, wipe: bool) -> Result<()> {
     Ok(())
 }
 
+async fn observe(root: &Path, down: bool) -> Result<()> {
+    if down {
+        println!("cupel: stopping the monitoring stack");
+        compose_file(root, "compose/observe.yml", &["down"]).await?;
+        return Ok(());
+    }
+
+    println!("cupel: starting prometheus and grafana");
+    compose_file(root, "compose/observe.yml", &["up", "-d"]).await?;
+    println!();
+    println!("  Grafana      http://127.0.0.1:3000");
+    println!("  Prometheus   http://127.0.0.1:9090");
+    println!("  Metrics      {GATEWAY_URL}/metrics");
+    println!();
+    println!("  The dashboard is provisioned; no login needed.");
+    println!();
+    Ok(())
+}
+
 async fn status(root: &Path) -> Result<()> {
     let secret = match read_jwt_secret(root)? {
         Some(secret) => secret,
@@ -221,7 +299,7 @@ async fn status(root: &Path) -> Result<()> {
     };
     let producer = Producer::new(Config {
         engine_url: ENGINE_URL.to_string(),
-        rpc_url: RPC_URL.to_string(),
+        rpc_url: NODE_RPC_URL.to_string(),
         jwt_secret: secret,
         ..Config::default()
     });
@@ -229,12 +307,12 @@ async fn status(root: &Path) -> Result<()> {
     match producer.current_head().await {
         Ok(head) => {
             println!("cupel: running");
-            println!("  rpc      {RPC_URL}");
+            println!("  rpc      {GATEWAY_URL}");
             println!("  head     {} ({})", head.number, short(&head.hash));
             println!("  time     {}", head.timestamp);
         }
         Err(error) => {
-            println!("cupel: not reachable at {RPC_URL}");
+            println!("cupel: not reachable at {NODE_RPC_URL}");
             println!("  {error}");
         }
     }
@@ -254,8 +332,8 @@ async fn wait_for_rpc(producer: &Producer) -> Result<Head> {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     match last {
-        Some(error) => Err(error).context(format!("the chain never answered on {RPC_URL}")),
-        None => bail!("the chain never answered on {RPC_URL}"),
+        Some(error) => Err(error).context(format!("the chain never answered on {NODE_RPC_URL}")),
+        None => bail!("the chain never answered on {NODE_RPC_URL}"),
     }
 }
 
@@ -285,10 +363,14 @@ fn read_jwt_secret(root: &Path) -> Result<Option<[u8; 32]>> {
 }
 
 async fn compose(root: &Path, args: &[&str]) -> Result<()> {
+    compose_file(root, "compose/lab.yml", args).await
+}
+
+async fn compose_file(root: &Path, file: &str, args: &[&str]) -> Result<()> {
     let status = Command::new("docker")
         .arg("compose")
         .arg("-f")
-        .arg(root.join("compose/lab.yml"))
+        .arg(root.join(file))
         .args(args)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -306,7 +388,9 @@ fn banner(head: &Head, block_time: u64) {
     println!();
     println!("  Cupel v{}", env!("CARGO_PKG_VERSION"));
     println!("  ---------------------------------------------------");
-    println!("  RPC          {RPC_URL}");
+    println!("  RPC          {GATEWAY_URL}");
+    println!("  Node         {NODE_RPC_URL} (behind the gateway)");
+    println!("  Metrics      {GATEWAY_URL}/metrics");
     println!("  Chain id     31337");
     println!("  Head         {} ({})", head.number, short(&head.hash));
     println!("  Block time   {block_time}s");

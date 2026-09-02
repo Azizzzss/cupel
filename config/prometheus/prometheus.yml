@@ -1,0 +1,14 @@
+# Scrape the gateway. It is the only thing here that emits metrics: geth's own
+# --metrics endpoint is deliberately left off, because what matters in a lab is
+# what clients experienced, not what the node thinks of itself.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: cupel-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8545"]
+        labels:
+          instance: gateway
