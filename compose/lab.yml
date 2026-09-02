@@ -12,6 +12,24 @@ services:
     # The datadir is initialised from genesis on first boot only. Doing it here
     # rather than in a separate init container keeps `cupel up` to one step and
     # makes a restart idempotent.
+    #
+    # --miner.gasprice decides whether a transaction ever reaches a block, and
+    # it fails silently when wrong: the transaction is accepted into the pool
+    # and simply stays there, pending for ever, while blocks come out empty.
+    # Anything paying a smaller tip than this is dropped by the payload builder.
+    #
+    # It is 1 rather than 0 because geth refuses zero outright — it logs
+    # "Sanitizing invalid miner gas price provided=0 updated=1,000,000" and
+    # quietly raises the floor to 0.001 gwei, which is worse than the value
+    # asked for. One wei is the lowest figure geth will actually honour.
+    #
+    # Note there is no --gpo.ignoreprice here on purpose. Lowering it makes
+    # geth's fee oracle suggest a tip beneath its own miner floor, so clients
+    # dutifully build transactions their node will never mine.
+    #
+    # --miner.recommit is how often geth refreshes a payload it is building. It
+    # defaults to 2s, which is longer than a whole block here, so it is lowered
+    # to keep the producer's short collection delay sufficient.
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -39,6 +57,9 @@ services:
           --authrpc.jwtsecret /config/jwt.hex \
           --nodiscover \
           --maxpeers 0 \
+          --miner.gasprice 1 \
+          --miner.recommit 100ms \
+          --rpc.allow-unprotected-txs \
           --syncmode full \
           --gcmode archive \
           --state.scheme hash \

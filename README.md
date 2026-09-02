@@ -44,9 +44,11 @@ race actually happen instead of reading about it.
 That is what Cupel is being built into. See [the design document](docs/design.md)
 for the full seven-phase plan.
 
-> **Status: phase A.** The control plane and block producer work. Everything
-> else in the plan — the contract library, the gateway, policy signing, the
-> multi-client network, the oracle and the explorer — is not built yet.
+> **Status: phase A, verified.** `cupel up` brings a chain online in about eight
+> seconds, produces blocks on a timer, and `cast send` lands a transfer that
+> moves real balances. Historical state queries work. Everything else in the
+> plan — the contract library, the gateway, policy signing, the multi-client
+> network, the oracle and the explorer — is not built yet.
 
 ## The interesting part
 
@@ -116,6 +118,18 @@ and being able to query the past is worth a great deal in a teaching tool.
 answers from a client that is catching up on a real network. Here they mean
 something is wrong, and treating them as success would silently stall the chain
 while appearing to work.
+
+**`--miner.gasprice` is the flag that decides whether anything gets mined**, and
+it fails silently. Geth's payload builder drops any transaction offering a
+smaller tip than this, so the transaction is accepted into the pool, reported as
+pending, and then never included — blocks keep coming, all of them empty, and
+nothing anywhere reports an error. Worse, geth *refuses* a value of zero: it
+logs `Sanitizing invalid miner gas price provided=0 updated=1,000,000` and
+raises the floor to 0.001 gwei. One wei is the lowest it will honour.
+
+The matching trap is `--gpo.ignoreprice`. Lower it and geth's fee oracle starts
+suggesting a tip beneath its own miner floor, so clients faithfully build
+transactions the node will never mine. Cupel leaves it alone.
 
 ## Licence
 

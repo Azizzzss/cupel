@@ -118,8 +118,12 @@ pub struct Config {
     pub block_time: Duration,
     /// How long to let the client build a payload before collecting it.
     ///
-    /// Too short and transactions that arrived a moment ago miss the block;
-    /// too long and every block is delayed by the difference.
+    /// This has to exceed the client's payload refresh interval, not merely be
+    /// "long enough to be safe". Geth answers a build request with an empty
+    /// payload straight away and only fills it in on its `--miner.recommit`
+    /// tick; collect sooner than that and every block comes back empty, with
+    /// the transactions still sitting in the pool and nothing reporting an
+    /// error.
     pub build_delay: Duration,
 }
 
@@ -131,7 +135,7 @@ impl Default for Config {
             jwt_secret: [0u8; 32],
             fee_recipient: "0x0000000000000000000000000000000000000000".to_string(),
             block_time: Duration::from_secs(1),
-            build_delay: Duration::from_millis(250),
+            build_delay: Duration::from_millis(500),
         }
     }
 }
