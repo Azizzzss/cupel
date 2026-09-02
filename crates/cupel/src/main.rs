@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod contracts;
+mod network;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -100,11 +101,38 @@ enum Commands {
         #[arg(long)]
         down: bool,
     },
+    /// Run the multi-client devnet instead of the single-node lab.
+    ///
+    /// Three execution clients paired with Lighthouse, Prysm and Teku, driven
+    /// by sixty-four validators. Real consensus, real peers, real finality —
+    /// and a minute to the first finalised epoch, where lab mode is instant.
+    Network {
+        #[command(subcommand)]
+        command: NetworkCommand,
+    },
     /// Rewrite the genesis file from the compiled contracts.
     ///
     /// Only needed after changing a contract; the result is committed so a
     /// clone needs no Solidity toolchain to bring a chain up.
     Genesis,
+}
+
+#[derive(Debug, Subcommand)]
+enum NetworkCommand {
+    /// Generate a devnet, bring it up, and front all three nodes on 8545.
+    Up {
+        /// Start the containers and exit, without the gateway.
+        #[arg(long)]
+        detach: bool,
+    },
+    /// Generate a devnet without starting it.
+    Init,
+    /// Stop the devnet, keeping its chains.
+    Down,
+    /// Stop the devnet and delete its chains.
+    Reset,
+    /// Ask all three nodes where the chain has got to.
+    Status,
 }
 
 #[tokio::main]
@@ -130,6 +158,13 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Observe { down } => observe(&root, down).await,
+        Commands::Network { command } => match command {
+            NetworkCommand::Up { detach } => network::up(&root, detach).await,
+            NetworkCommand::Init => network::init(&root).await,
+            NetworkCommand::Down => network::down(&root, false).await,
+            NetworkCommand::Reset => network::down(&root, true).await,
+            NetworkCommand::Status => network::status(&root).await,
+        },
         Commands::Genesis => {
             let count = contracts::regenerate_genesis(&root)?;
             println!("cupel: wrote {count} contracts into the genesis allocation");

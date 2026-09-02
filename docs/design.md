@@ -32,11 +32,17 @@ still works exactly as written, and that half is the entire peer-to-peer story.
 | `--networkid` | `"clique": { period, epoch }` |
 | `genesis.json` → `alloc` | `extraData` signer encoding |
 | `geth init --datadir` | `--mine` |
-| `bootnode -genkey` / `-nodekey` | `--miner.etherbase` |
-| `--bootnodes enode://…?discport=` | `--miner.threads` |
-| `--nat extip:` | `"ethash": {}` |
-| `--netrestrict` | `difficulty` as a mining knob |
-| `admin.nodeInfo.enr` · `admin.peers` | |
+| `--bootnodes enode://…` | `--miner.etherbase` |
+| `--nat extip:` | `--miner.threads` |
+| `--netrestrict` | `"ethash": {}` |
+| `admin.nodeInfo.enr` · `admin.peers` | `difficulty` as a mining knob |
+| | `bootnode -genkey` / `-nodekey` |
+
+The last row is a correction this plan needed after phase E: the `bootnode`
+binary has been removed from go-ethereum and is not in the `alltools` image, so
+every guide that starts with `bootnode -genkey` — geth's own included — no
+longer runs. `devp2p discv4 listen` does the same job and takes the node key as
+a hex string rather than a file.
 
 **The detail most setups get wrong:** post-merge there are *two* peer networks.
 Execution nodes gossip **transactions** over devp2p; **blocks** travel on the
@@ -75,10 +81,10 @@ NETWORK MODE — cupel up --network
         +--------------+--------------+
                        | devp2p + discv5
                 +------v-------+
-                | bootnode     |  a regular geth node,
-                | discovery    |  not cmd/bootnode
+                | bootnode     |  devp2p discv4 listen:
+                | discovery    |  no chain, no rpc
                 +--------------+
-   172.20.0.0/24 - --netrestrict - --nat extip: per node
+   a free 172.x.0.0/24 - --netrestrict - --nat extip: per node
 ```
 
 Three *different* consensus clients is deliberate. A supermajority-client bug is
@@ -148,11 +154,17 @@ and the capabilities — never over the protocol.
 1. **`--nat extip:` is mandatory inside Docker.** Without it geth advertises its
    container-internal address, peers dial back to something unroutable, and the
    mesh silently never forms.
-2. **`--netrestrict` maps onto the bridge subnet.** `--netrestrict 172.20.0.0/24`
-   means nodes only ever peer inside the network Cupel created.
-3. **The bootnode is a normal geth node.** Geth's docs are explicit that
-   `cmd/bootnode` is a developer tool and a regular node should be used for
-   anything real.
+2. **`--netrestrict` maps onto the bridge subnet**, so nodes only ever peer
+   inside the network Cupel created. The subnet itself is chosen at generation
+   time from what Docker has not already allocated: a fixed one collided with an
+   unrelated project on the first machine this ran on, and Docker's error for
+   that names no culprit.
+3. **The bootnode is `devp2p discv4 listen`.** The plan said to use a normal
+   geth node, on the strength of geth's own documentation calling `cmd/bootnode`
+   a developer tool. Both halves are now out of date: `bootnode` has been
+   removed from go-ethereum entirely and is absent from the `alltools` image,
+   and `devp2p discv4 listen` is what replaced it — a discovery node that holds
+   no chain and answers no RPC, which is exactly what a bootnode should be.
 
 ### Ports
 
@@ -163,7 +175,10 @@ and the capabilities — never over the protocol.
 | 8551 | Engine API, JWT authenticated | internal |
 | 30303 | devp2p, per node | internal |
 | 8550 | Policy signer | internal |
-| 5052 | Consensus client beacon API | internal |
+| 8555–8557 | Network mode: each node's JSON-RPC | yes |
+| 5052 / 5152 / 5252 | Network mode: each beacon API | yes |
+| 6061–6063, 6071–6073 | Network mode: execution and consensus metrics | yes |
+| 9000 | Consensus p2p, per node | internal |
 | 3000 | Grafana | yes |
 | 4000 | Blockscout | yes |
 | 6688 | Chainlink node UI | yes |
@@ -184,12 +199,55 @@ tag — that discipline is what stops month seven from being "still not demoable
 | **F** | Oracle — Chainlink node, LINK, Operator, a job | a contract reads an off-chain price | heavy |
 | **G** | Explorer and faucet | click through your own blocks in a browser | medium |
 
+## What phase E actually cost
+
+Two of the risks below were written before starting and both were right, so they
+are worth keeping score against.
+
+**"Three consensus clients means three sets of flags"** — understated, if
+anything. Each client failed on its first run, in a way particular to it and for
+reasons that had nothing to do with consensus:
+
+| | Failure | Cause |
+|---|---|---|
+| Lighthouse | refused to start | `--datadir` and `--validators-dir` are mutually exclusive; the keystore directory *is* the data directory, because it holds the slashing protection database |
+| Teku | crash loop, stack trace about a log appender | runs as an unprivileged user, and a named volume mounted where the image creates no directory arrives owned by root |
+| Teku, again | `keystore file … already in use` | it writes a `.lock` beside each key and a container that is killed rather than stopped leaves them behind, so every restart after a crash reports a lock rather than the crash |
+| Prysm | refused to start | `--accept-terms-of-use` |
+
+**"Post-merge genesis is the fiddliest single step"** — right about the
+difficulty, wrong about the remedy. The plan said to lift the configuration from
+Kurtosis. Better: use the generator Kurtosis itself calls,
+`ethpandaops/ethereum-genesis-generator`, which produces the execution genesis,
+the beacon state, the fork schedule and the validator keys as one consistent
+set. It has no `latest` tag, which forces a pin — an inconvenience that turns
+out to be the right behaviour.
+
+Two things it does not do for you:
+
+- **Genesis is stamped with `GENESIS_TIMESTAMP`, and the default is zero.** A
+  chain beginning in 1970 is not obviously wrong from the file; it is obvious
+  from every client spending its first minutes walking three hundred million
+  empty slots.
+- **The execution genesis `timestamp` is written in decimal.** geth accepts both
+  (`HexOrDecimal64`), so it is correct — but reading it as hex, which the `0x`
+  everywhere else trains you to do, produces a number a hundred times too large
+  and a convincing false alarm.
+
+**And one the plan did not anticipate: discovery is not enough on a network this
+small.** Every consensus client had the correct bootnode ENR and the mesh still
+did not form — Teku sat isolated, contributing nothing, while the chain was one
+node short of the two thirds it needs to finalise. Discovery is a protocol for
+finding strangers on a large network. Three nodes that know about each other
+should dial each other: `network up` hands out node 1's libp2p address alongside
+its ENR, and discovery runs beside it rather than instead of it.
+
 ## Budget
 
 | Stage | Memory | Disk | Containers |
 |---|---|---|---|
 | Lab mode, phases A–D | ~1.5 GB | negligible | 5 |
-| Network mode, phase E | ~6 GB | 10–20 GB | 11 |
+| Network mode, phase E | ~6 GB | ~2 GB | 9 |
 | + Phase F | ~7 GB | +2 GB | 13 |
 | + Phase G | ~11 GB | +5 GB | 16 |
 
@@ -198,13 +256,11 @@ tag — that discipline is what stops month seven from being "still not demoable
 - **Scope creep is the real threat, not difficulty.** Every phase is achievable.
   The failure mode is starting E and F before A–D ship. Tag a release at every
   boundary.
-- **Post-merge genesis is the fiddliest single step.** Terminal total difficulty
-  at zero, fork timestamps, matching validator keys, a JWT shared with each
-  consensus client. Lift the configuration from Kurtosis' `ethereum-package`
-  rather than deriving it — borrow the config, own the orchestration.
-- **Three consensus clients means three sets of flags.** Client diversity is the
-  point, but Lighthouse, Prysm and Teku disagree about almost every CLI
-  convention. Get one working end to end before adding the second.
+- ~~**Post-merge genesis is the fiddliest single step.**~~ Landed, and the
+  remedy was better than the one planned — see above.
+- ~~**Three consensus clients means three sets of flags.**~~ Landed, and worse
+  than written: every one of the three failed on its first run, none of them for
+  a reason to do with consensus.
 - **Chainlink is more work than it looks.** The node is the easy half; a deployed
   LINK token, an Operator contract, funded jobs and an external adapter are the
   other.
@@ -225,3 +281,12 @@ tag — that discipline is what stops month seven from being "still not demoable
 4. **Gateway — upstreams are a list with capabilities** from the first commit,
    without any plugin machinery.
 5. **Private until phase B lands**, then public.
+6. **Genesis is generated, not committed.** `config/network/` holds validator
+   keys and a beacon state stamped with the moment it was made; none of it is
+   meaningful a day later, and `cupel network init` rebuilds it in under a
+   minute. The lab genesis is committed for the opposite reason: it never
+   changes unless a contract does, and committing it is what lets a clone bring
+   a chain up with no Solidity toolchain installed.
+7. **Both modes carry the same contracts.** Network genesis takes their bytecode
+   from the committed lab genesis rather than recompiling, so the two cannot
+   drift and neither needs Foundry to start.

@@ -5,7 +5,59 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
-Phase E: the multi-client network.
+Phase F: a Chainlink oracle.
+
+---
+
+## [0.5.0] — Phase E: the multi-client network
+
+`cupel network up`: nine containers, three consensus clients, sixty-four
+validators and a chain that finalises.
+
+### Added
+
+- **Network mode** — a discovery bootnode, three geth nodes, and Lighthouse,
+  Prysm and Teku each driving one of them. Validators split 22/21/21, so no
+  single node can finalise alone.
+- **Generated devnet** — genesis, beacon state and validator keys from
+  ethPandaOps' generator, pinned to `6.2.1`, with the fork schedule active from
+  block zero.
+- `cupel network up` / `init` / `down` / `reset` / `status`. Status queries all
+  three nodes and prints their block, slot, justified and finalised epochs side
+  by side, because three clients agreeing is the thing worth showing.
+- **Prometheus scrapes both layers** of all three nodes, and a second Grafana
+  dashboard, *Cupel — network*, graphs what they each say. Targets that are down
+  in lab mode report as down, which is the honest answer.
+
+### Notes
+
+- **`bootnode` no longer exists.** It has been removed from go-ethereum and is
+  absent from the `alltools` image. `devp2p discv4 listen` replaces it — the
+  same job, and still a discovery-only node holding no chain.
+- **Genesis is stamped at generation time, and regenerated only when there is no
+  chain to resume.** Left at the generator's default the chain starts in 1970
+  and every client walks three hundred million empty slots first; regenerated
+  unconditionally, a restart would silently replace the chain under the data.
+- **Discovery alone did not form the mesh.** Every client had the correct
+  bootnode record and Teku still sat isolated while the chain was one node short
+  of finalising. Node 1's libp2p address is now handed out alongside its ENR.
+- **The subnet is chosen, not fixed.** A hard-coded one collided with an
+  unrelated project, and Docker's error for that names no culprit. Ranges Docker
+  allocates itself and the range WSL uses for its own interface are both skipped.
+- Nodes 2 and 3 cannot start until node 1 has an ENR to give them, which is a
+  dependency on a value produced by a container compose started — and most of
+  the reason the control plane exists.
+- **geth serves Prometheus at `/debug/metrics/prometheus`, not `/metrics`.** The
+  wrong path gives a target that answers, scrapes clean, and yields nothing.
+- The three consensus clients agree on `beacon_head_slot` and
+  `beacon_finalized_epoch`, and on nothing about peer counts — not the metric
+  name and not the semantics. Shown per client rather than reconciled.
+
+### Fixed
+
+- The workspace version had stayed at `0.1.0` through four tagged releases, so
+  `cupel --version` reported `0.1.0` on all of them. It is `0.5.0` now, and
+  bumping it belongs in the same commit as the tag.
 
 ---
 

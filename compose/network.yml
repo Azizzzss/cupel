@@ -1,0 +1,415 @@
+# Network mode: a real post-merge devnet. Execution nodes paired with consensus
+# clients, a discovery bootnode, and sixty-four validators split between them.
+# Blocks come from proposers on a beacon chain, not from a producer on the host,
+# and the chain finalises.
+#
+# Every address here comes from config/network/network.env, written by
+# `cupel network init`. The subnet is chosen at that point from whatever is
+# free, because a hard-coded one collides with whatever else the machine is
+# running and fails with an error that does not name the culprit.
+#
+# Announcing the right address is the single most common reason a local devnet
+# forms no peers: without --nat extip geth guesses, and inside a container it
+# guesses wrong.
+name: cupel-network
+
+networks:
+  cupel:
+    name: cupel-network
+    ipam:
+      config:
+        - subnet: ${CUPEL_SUBNET}
+
+# The three execution nodes are the same node three times. `$$` leaves a
+# variable for the shell inside the container rather than for compose, so the
+# one thing that differs between them — which address to announce — arrives
+# through the environment, and the flags themselves live in exactly one place.
+#
+# A merge key replaces maps rather than merging them, so each service repeats
+# `environment` and `volumes`. That is still three lines each rather than twenty
+# flags each.
+#
+# --miner.gasprice is 1 for the same reason as in lab mode: geth's payload
+# builder silently drops anything offering a smaller tip, and refuses a value of
+# zero outright. Get it wrong and transactions sit pending for ever with no log
+# anywhere saying why.
+x-geth: &geth
+  image: ethereum/client-go:stable
+  restart: unless-stopped
+  entrypoint: ["/bin/sh", "-c"]
+  command:
+    - |
+      if [ ! -d /data/geth ]; then
+        geth --state.scheme=hash init --datadir /data /genesis/genesis.json || exit 1
+      fi
+      exec geth \
+        --datadir /data \
+        --networkid 31337 \
+        --bootnodes "$$EL_BOOTNODE" \
+        --nat "extip:$$SELF_IP" \
+        --netrestrict "$$CUPEL_SUBNET" \
+        --port 30303 --discovery.port 30303 --maxpeers 25 \
+        --http --http.addr 0.0.0.0 --http.port 8545 \
+        --http.api eth,net,web3,debug,txpool,admin \
+        --http.corsdomain '*' --http.vhosts '*' \
+        --authrpc.addr 0.0.0.0 --authrpc.port 8551 --authrpc.vhosts '*' \
+        --authrpc.jwtsecret /jwt/jwtsecret \
+        --miner.gasprice 1 \
+        --syncmode full --gcmode archive --state.scheme hash \
+        --metrics --metrics.addr 0.0.0.0 --metrics.port 6060 \
+        --verbosity 3
+  healthcheck:
+    test: ["CMD-SHELL", "geth attach --exec 'eth.chainId()' /data/geth.ipc >/dev/null 2>&1 || exit 1"]
+    interval: 3s
+    timeout: 5s
+    retries: 40
+    start_period: 5s
+
+services:
+  # ---------------------------------------------------------------- discovery
+
+  # The execution layer's bootnode: a discovery node that holds no chain and
+  # answers no RPC. Its only job is to sit at an address the others already
+  # know, so they can find each other without being told about each other.
+  #
+  # This used to be geth's `bootnode` binary. That binary no longer exists — it
+  # was dropped from go-ethereum, and the alltools image ships without it.
+  # `devp2p discv4 listen` is the replacement and does the same job.
+  bootnode:
+    image: ethereum/client-go:alltools-stable
+    container_name: cupel-bootnode
+    restart: unless-stopped
+    entrypoint: ["devp2p"]
+    command:
+      - discv4
+      - listen
+      - --nodekey
+      - ${EL_BOOTNODE_KEY}
+      - --addr
+      - 0.0.0.0:30301
+      - --extaddr
+      - ${IP_BOOTNODE}:30301
+    networks:
+      cupel:
+        ipv4_address: ${IP_BOOTNODE}
+
+  # ------------------------------------------------------------------- node 1
+
+  el1:
+    <<: *geth
+    container_name: cupel-el1
+    environment:
+      SELF_IP: ${IP_EL1}
+      EL_BOOTNODE: ${EL_BOOTNODE}
+      CUPEL_SUBNET: ${CUPEL_SUBNET}
+    volumes:
+      - ../config/network/metadata:/genesis:ro
+      - ../config/network/jwt:/jwt:ro
+      - el1-data:/data
+    ports:
+      - "127.0.0.1:8555:8545"
+      - "127.0.0.1:6061:6060"
+    networks:
+      cupel:
+        ipv4_address: ${IP_EL1}
+
+  # The beacon node. --testnet-dir is what makes this a custom chain rather than
+  # mainnet: the config, the genesis state and the deposit contract block all
+  # come from there.
+  #
+  # --supernode is not optional here. This chain activates Fulu at genesis, so
+  # blob data is split into columns and custody is shared out across the
+  # network. Three nodes cannot reliably hold a quorum of columns between them,
+  # so each one custodies all of them.
+  #
+  # --disable-packet-filter and --allow-insecure-genesis-sync are both safety
+  # features that are wrong on a private network: the first rate-limits peers
+  # that all share one host, the second refuses a chain with no checkpoint to
+  # trust — which is every chain that starts at its own genesis.
+  cl1:
+    image: sigp/lighthouse:latest
+    container_name: cupel-cl1
+    restart: unless-stopped
+    depends_on:
+      el1:
+        condition: service_healthy
+    command:
+      - lighthouse
+      - --testnet-dir=/testnet
+      - beacon_node
+      - --datadir=/data
+      - --execution-endpoint=http://${IP_EL1}:8551
+      - --execution-jwt=/jwt/jwtsecret
+      - --http
+      - --http-address=0.0.0.0
+      - --http-port=5052
+      - --http-allow-origin=*
+      - --listen-address=0.0.0.0
+      - --port=9000
+      - --discovery-port=9000
+      - --quic-port=9001
+      - --enr-address=${IP_CL1}
+      - --enr-tcp-port=9000
+      - --enr-udp-port=9000
+      - --disable-upnp
+      - --disable-packet-filter
+      - --allow-insecure-genesis-sync
+      - --subscribe-all-subnets
+      - --supernode
+      - --target-peers=4
+      - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+      - --metrics
+      - --metrics-address=0.0.0.0
+      - --metrics-port=5054
+    volumes:
+      - ../config/network/testnet:/testnet:ro
+      - ../config/network/jwt:/jwt:ro
+      - cl1-data:/data
+    ports:
+      - "127.0.0.1:5052:5052"
+      - "127.0.0.1:6071:5054"
+    networks:
+      cupel:
+        ipv4_address: ${IP_CL1}
+
+  # The validator client is a separate process from the beacon node on purpose:
+  # it is the only thing here holding keys, and it reaches the beacon node over
+  # the same HTTP API any other validator would use.
+  vc1:
+    image: sigp/lighthouse:latest
+    container_name: cupel-vc1
+    restart: unless-stopped
+    depends_on: [cl1]
+    command:
+      - lighthouse
+      - --testnet-dir=/testnet
+      - validator_client
+      - --beacon-nodes=http://${IP_CL1}:5052
+      - --validators-dir=/keys/keys
+      - --secrets-dir=/keys/secrets
+      - --init-slashing-protection
+      - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+      - --metrics
+      - --metrics-address=0.0.0.0
+      - --metrics-port=5064
+    volumes:
+      - ../config/network/testnet:/testnet:ro
+      # --validators-dir holds the slashing protection database and
+      # validator_definitions.yml as well as the keystores, so it is state, not
+      # configuration, and Lighthouse refuses --datadir alongside it.
+      - ../config/network/validators/node1:/keys
+    networks:
+      cupel:
+        ipv4_address: ${IP_VC1}
+
+  # ------------------------------------------------------------------- node 2
+  #
+  # Everything below is in the `peers` profile, because it cannot start until
+  # node 1's beacon node exists: a consensus client finds its peers from an ENR,
+  # and node 1's ENR is not known until node 1 is running. `cupel network up`
+  # starts wave one, reads the identity from the beacon API, writes it into
+  # network.env, and only then starts these. Compose cannot express a dependency
+  # on a value produced by a container it started, which is most of the reason
+  # the control plane exists.
+
+  el2:
+    <<: *geth
+    container_name: cupel-el2
+    profiles: [peers]
+    environment:
+      SELF_IP: ${IP_EL2}
+      EL_BOOTNODE: ${EL_BOOTNODE}
+      CUPEL_SUBNET: ${CUPEL_SUBNET}
+    volumes:
+      - ../config/network/metadata:/genesis:ro
+      - ../config/network/jwt:/jwt:ro
+      - el2-data:/data
+    ports:
+      - "127.0.0.1:8556:8545"
+      - "127.0.0.1:6062:6060"
+    networks:
+      cupel:
+        ipv4_address: ${IP_EL2}
+
+  # Prysm. The same job as Lighthouse and almost no shared vocabulary for it:
+  # --chain-config-file rather than --testnet-dir, --bootstrap-node rather than
+  # --boot-nodes, --accept-terms-of-use or it will not start at all.
+  #
+  # --contract-deployment-block=0 matters. Prysm otherwise scans the execution
+  # chain for deposit logs from mainnet's deposit block, which does not exist
+  # here, and waits for a chain history that will never arrive.
+  #
+  # It also logs an error about fields it cannot parse in the generated config —
+  # HEZE_FORK_*, and the inclusion-list constants. The generator emits the
+  # schedule for forks Prysm does not yet know about; every one of them is
+  # disabled here, Prysm carries on with its own defaults, and the fork digest
+  # all three clients agree on is unaffected. Teku warns about the same fields;
+  # Lighthouse ignores them.
+  cl2:
+    image: gcr.io/offchainlabs/prysm/beacon-chain:latest
+    container_name: cupel-cl2
+    profiles: [peers]
+    restart: unless-stopped
+    depends_on:
+      el2:
+        condition: service_healthy
+    command:
+      - --datadir=/data
+      - --chain-config-file=/testnet/config.yaml
+      - --genesis-state=/testnet/genesis.ssz
+      - --contract-deployment-block=0
+      - --execution-endpoint=http://${IP_EL2}:8551
+      - --jwt-secret=/jwt/jwtsecret
+      - --rpc-host=0.0.0.0
+      - --rpc-port=4000
+      - --http-host=0.0.0.0
+      - --http-port=5052
+      - --http-cors-domain=*
+      - --p2p-host-ip=${IP_CL2}
+      - --p2p-tcp-port=9000
+      - --p2p-udp-port=9000
+      - --bootstrap-node=${CL_BOOTNODE}
+      # Discovery finds strangers on a large network. This one has three members
+      # and knows all of them, so node 1 is also dialled directly.
+      - --peer=${CL_STATIC_PEER}
+      - --min-sync-peers=1
+      - --minimum-peers-per-subnet=0
+      - --subscribe-all-subnets
+      - --supernode
+      - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+      - --monitoring-host=0.0.0.0
+      - --monitoring-port=8080
+      - --accept-terms-of-use
+      - --verbosity=info
+    volumes:
+      - ../config/network/testnet:/testnet:ro
+      - ../config/network/jwt:/jwt:ro
+      - cl2-data:/data
+    ports:
+      - "127.0.0.1:5152:5052"
+      - "127.0.0.1:6072:8080"
+    networks:
+      cupel:
+        ipv4_address: ${IP_CL2}
+
+  # Prysm keeps its keys in a wallet rather than as loose keystores, and reads
+  # the wallet password from a file `cupel network init` writes. The two names
+  # have to agree; a test in crates/cupel/src/network.rs checks that they do,
+  # because a mismatch is silent — this container restarts every minute, its
+  # twenty-one validators never attest, and the only visible symptom is a chain
+  # that will not finalise.
+  vc2:
+    image: gcr.io/offchainlabs/prysm/validator:latest
+    container_name: cupel-vc2
+    profiles: [peers]
+    restart: unless-stopped
+    depends_on: [cl2]
+    command:
+      - --datadir=/data
+      - --chain-config-file=/testnet/config.yaml
+      - --beacon-rpc-provider=${IP_CL2}:4000
+      - --wallet-dir=/keys/prysm
+      - --wallet-password-file=/keys/prysm-password.txt
+      - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+      - --monitoring-host=0.0.0.0
+      - --monitoring-port=8081
+      - --accept-terms-of-use
+    volumes:
+      - ../config/network/testnet:/testnet:ro
+      - ../config/network/validators/node2:/keys
+      - vc2-data:/data
+    networks:
+      cupel:
+        ipv4_address: ${IP_VC2}
+
+  # ------------------------------------------------------------------- node 3
+
+  el3:
+    <<: *geth
+    container_name: cupel-el3
+    profiles: [peers]
+    environment:
+      SELF_IP: ${IP_EL3}
+      EL_BOOTNODE: ${EL_BOOTNODE}
+      CUPEL_SUBNET: ${CUPEL_SUBNET}
+    volumes:
+      - ../config/network/metadata:/genesis:ro
+      - ../config/network/jwt:/jwt:ro
+      - el3-data:/data
+    ports:
+      - "127.0.0.1:8557:8545"
+      - "127.0.0.1:6063:6060"
+    networks:
+      cupel:
+        ipv4_address: ${IP_EL3}
+
+  # Teku runs the validator in the same process as the beacon node, which is why
+  # there is no vc3. It is also the only one of the three that takes the config
+  # file as the value of --network.
+  cl3:
+    image: consensys/teku:latest
+    container_name: cupel-cl3
+    profiles: [peers]
+    restart: unless-stopped
+    # Teku's image runs as an unprivileged user, and a named volume mounted at a
+    # path the image does not create arrives owned by root. Teku then cannot
+    # write its own data directory and exits during startup, with a stack trace
+    # about a log appender rather than about permissions.
+    user: root
+    depends_on:
+      el3:
+        condition: service_healthy
+    command:
+      - --network=/testnet/config.yaml
+      - --initial-state=/testnet/genesis.ssz
+      - --data-path=/data
+      - --ee-endpoint=http://${IP_EL3}:8551
+      - --ee-jwt-secret-file=/jwt/jwtsecret
+      - --rest-api-enabled=true
+      - --rest-api-interface=0.0.0.0
+      - --rest-api-port=5052
+      - --rest-api-host-allowlist=*
+      - --p2p-enabled=true
+      - --p2p-advertised-ip=${IP_CL3}
+      - --p2p-port=9000
+      - --p2p-discovery-bootnodes=${CL_BOOTNODE}
+      # Teku found no peers from discovery alone and sat isolated with the right
+      # bootnode record in its configuration. A known address is deterministic.
+      - --p2p-static-peers=${CL_STATIC_PEER}
+      - --p2p-subscribe-all-subnets-enabled=true
+      - --validator-keys=/keys/teku-keys:/keys/teku-secrets
+      # Teku writes a .lock beside each keystore and refuses to start if one is
+      # already there. A container that is killed rather than stopped leaves
+      # them behind, so every restart after a crash fails with "already in use"
+      # — a message about a lock file, for what is really a crash three restarts
+      # ago. One process owns these keys; the lock protects nothing.
+      - --validators-keystore-locking-enabled=false
+      - --validators-proposer-default-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+      - --metrics-enabled=true
+      - --metrics-interface=0.0.0.0
+      - --metrics-port=8008
+      - --metrics-host-allowlist=*
+      - --ignore-weak-subjectivity-period-enabled=true
+      # Logs belong on stdout in a container; the default also writes a file.
+      - --log-destination=CONSOLE
+      - --logging=INFO
+    volumes:
+      - ../config/network/testnet:/testnet:ro
+      - ../config/network/jwt:/jwt:ro
+      - ../config/network/validators/node3:/keys
+      - cl3-data:/data
+    ports:
+      - "127.0.0.1:5252:5052"
+      - "127.0.0.1:6073:8008"
+    networks:
+      cupel:
+        ipv4_address: ${IP_CL3}
+
+volumes:
+  el1-data: { name: cupel-el1-data }
+  cl1-data: { name: cupel-cl1-data }
+  el2-data: { name: cupel-el2-data }
+  cl2-data: { name: cupel-cl2-data }
+  vc2-data: { name: cupel-vc2-data }
+  el3-data: { name: cupel-el3-data }
+  cl3-data: { name: cupel-cl3-data }

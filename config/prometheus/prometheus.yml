@@ -1,6 +1,10 @@
-# Scrape the gateway. It is the only thing here that emits metrics: geth's own
-# --metrics endpoint is deliberately left off, because what matters in a lab is
-# what clients experienced, not what the node thinks of itself.
+# In lab mode the gateway is the only thing worth scraping: what matters is what
+# clients experienced, not what the node thinks of itself.
+#
+# In network mode the node's own view is the point. Three execution clients and
+# three different consensus clients should agree about the head, and a scrape of
+# each one is how that is checked rather than asserted. Those targets are down
+# in lab mode and Prometheus reports them as such, which is the honest answer.
 global:
   scrape_interval: 5s
   evaluation_interval: 5s
@@ -12,3 +16,25 @@ scrape_configs:
       - targets: ["host.docker.internal:8545"]
         labels:
           instance: gateway
+
+  - job_name: cupel-execution
+    # geth does not serve Prometheus at /metrics. It serves expvar there and
+    # the text exposition format here, and pointing at the wrong one produces a
+    # target that answers, scrapes clean, and yields nothing.
+    metrics_path: /debug/metrics/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:6061"]
+        labels: { node: node1, client: geth }
+      - targets: ["host.docker.internal:6062"]
+        labels: { node: node2, client: geth }
+      - targets: ["host.docker.internal:6063"]
+        labels: { node: node3, client: geth }
+
+  - job_name: cupel-consensus
+    static_configs:
+      - targets: ["host.docker.internal:6071"]
+        labels: { node: node1, client: lighthouse }
+      - targets: ["host.docker.internal:6072"]
+        labels: { node: node2, client: prysm }
+      - targets: ["host.docker.internal:6073"]
+        labels: { node: node3, client: teku }

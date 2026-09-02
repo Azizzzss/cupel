@@ -5,6 +5,10 @@ eight seconds — no sync, no download — with annotated reference contracts
 already deployed, a gateway in front of it, a signer holding a key under policy,
 and dashboards showing what clients actually experienced.
 
+A second command gives you a **real network** instead: three execution clients
+paired with Lighthouse, Prysm and Teku, sixty-four validators, a discovery
+bootnode, and a chain that genuinely finalises. Same contracts, same addresses.
+
 > A **cupel** is the porous bone-ash vessel used in fire assay. You heat an alloy
 > inside it; the base metals oxidise into the walls, and what remains is the pure
 > metal. It is the tool for finding out what something is really made of.
@@ -42,7 +46,7 @@ cargo run -p cupel --release
 ```
 
 ```
-  Cupel v0.1.0
+  Cupel v0.5.0
   ---------------------------------------------------
   RPC          http://127.0.0.1:8545
   Node         http://127.0.0.1:8546 (behind the gateway)
@@ -176,6 +180,94 @@ issuing them is the usual way a local node becomes unresponsive.
 
 ---
 
+## Network mode
+
+Lab mode is one node told what to do by a producer on the host. That is the
+right trade when you want a chain *now*, and the wrong one when the question is
+about the network itself. `cupel network up` builds the other thing:
+
+```bash
+cupel network up
+```
+
+```
+  Cupel network v0.5.0
+  ---------------------------------------------------
+  node1   Lighthouse  rpc http://127.0.0.1:8555  beacon http://127.0.0.1:5052
+  node2   Prysm       rpc http://127.0.0.1:8556  beacon http://127.0.0.1:5152
+  node3   Teku        rpc http://127.0.0.1:8557  beacon http://127.0.0.1:5252
+
+  Chain id     31337, 64 validators, 6s slots
+  Contracts    the same addresses as lab mode
+```
+
+Nine containers: a discovery bootnode, three geth nodes, three different
+consensus clients, and the validator clients driving them. Sixty-four validators
+split 22/21/21, so **no single node can finalise the chain alone** — two thirds
+of the stake has to agree, and that means at least two of the three clients
+agreeing, in production code, about a chain they each built independently.
+
+```bash
+cupel network status
+```
+
+```
+  node    consensus     block   slot   justified   finalized
+  ------------------------------------------------------------
+  node1   Lighthouse      147    151          16          15
+  node2   Prysm           147    151          16          15
+  node3   Teku            147    151          16          15
+```
+
+Three clients, three numbers, and they match. That is the whole point of the
+mode: not that a chain runs, but that independent implementations agree about
+what it contains.
+
+`cupel observe` brings up a second dashboard for this mode. The panel that
+matters is **Clients disagreeing** — the gap between the furthest-ahead and
+furthest-behind client, which should read zero for ever. Beside it, three head
+slot lines drawn exactly on top of one another.
+
+**Everything else still works.** Same chain id, same four funded accounts, and
+the same three contracts at the same addresses — the bytecode is lifted from the
+committed lab genesis rather than recompiled, so the two modes are provably
+carrying the same code:
+
+```bash
+cast call 0x00000000000000000000000000000000c0de0020 'name()(string)' \
+  --rpc-url http://127.0.0.1:8555      # "Cupel Token"
+```
+
+### What is generated, and what is written here
+
+Genesis, validator keys and the beacon chain's initial state come from
+[ethPandaOps' generator](https://github.com/ethpandaops/ethereum-genesis-generator),
+pinned to a version. What Cupel writes is the orchestration around it, because
+a devnet has two dependencies a compose file cannot express:
+
+**Genesis must be stamped with the current time.** Left at the generator's
+default the chain begins at the Unix epoch, and every client spends its first
+minutes walking three hundred million empty slots. So genesis is generated at
+start-up — but only when there is no chain to resume. A chain that has already
+run must keep the genesis it started from, and the data volumes are what decide
+which case this is.
+
+**Nodes 2 and 3 cannot start until node 1 exists.** A consensus client finds its
+peers from an ENR, and node 1's ENR does not exist until node 1 is running. So
+`network up` starts the first wave, polls the beacon API for node 1's identity,
+writes it into the environment, and only then starts the rest. That handoff is
+most of the reason there is a control plane here rather than a third compose
+file.
+
+**The subnet is chosen, not fixed.** A hard-coded `172.20.0.0/24` fails the
+moment another project on the machine has taken it, with a Docker error that
+names no culprit. `network init` reads what Docker has already allocated and
+picks a free one — skipping the range Docker hands out itself, and the range WSL
+uses for its own interface, since claiming that one cuts the host off from its
+network in order to run a devnet.
+
+---
+
 ## Policy signing
 
 Clients sign for themselves. The signer on `:8550` is for the other case: an
@@ -229,11 +321,25 @@ cupel observe          # Prometheus and Grafana, provisioned, no login
 cupel observe --down
 ```
 
-Grafana on `:3000` comes up with the dashboard already wired: upstreams
-answering, request rate split ok/failed/rejected, cache hit ratio, health over
-time, traffic by method. Metrics come from the gateway rather than from geth,
-deliberately — what matters in a lab is what clients experienced, not what the
-node thinks of itself.
+Grafana on `:3000` comes up with two dashboards already wired.
+
+**Cupel — gateway** is about lab mode: upstreams answering, request rate split
+ok/failed/rejected, cache hit ratio, health over time, traffic by method.
+Metrics come from the gateway rather than from geth, deliberately — what matters
+in a lab is what clients experienced, not what the node thinks of itself.
+
+**Cupel — network** is about the devnet, where the node's own view *is* the
+point: finalised epoch, head slot per consensus client, justification, peers on
+both layers, and the gap between the furthest-ahead and furthest-behind client.
+
+Two details that cost time. geth does not serve Prometheus at `/metrics` — it
+serves expvar there and the text format at `/debug/metrics/prometheus`, so the
+wrong path gives a target that answers, scrapes clean and yields nothing. And
+the three consensus clients agree on `beacon_head_slot` and
+`beacon_finalized_epoch` but not on what to call a peer count, or on what
+counts as one: Prysm can report zero peers while it is demonstrably gossiping.
+The panel shows each client as it sees itself, because smoothing that over would
+hide exactly the kind of difference this mode exists to surface.
 
 ---
 
@@ -250,6 +356,11 @@ node thinks of itself.
 | `cupel contracts` | list the reference contracts and their addresses |
 | `cupel genesis` | rewrite the genesis allocation from the compiled contracts |
 | `cupel observe` | start Prometheus and Grafana against the gateway |
+| `cupel network up` | build and start the three-client devnet |
+| `cupel network status` | ask all three nodes where the chain has got to |
+| `cupel network down` | stop the devnet, keep its chains |
+| `cupel network reset` | stop the devnet and delete its chains |
+| `cupel network init` | regenerate genesis and keys without starting anything |
 
 ### Ports
 
@@ -261,6 +372,14 @@ node thinks of itself.
 | `8551` | Engine API, JWT authenticated, localhost only |
 | `3000` / `9090` | Grafana / Prometheus, when `cupel observe` is running |
 
+Network mode uses its own ports, so both modes can run at once:
+
+| | |
+|---|---|
+| `8555` / `8556` / `8557` | the three execution clients' JSON-RPC |
+| `5052` / `5152` / `5252` | the three beacon APIs |
+| `6061`–`6063`, `6071`–`6073` | execution and consensus metrics, for Prometheus |
+
 ---
 
 ## Requirements
@@ -270,7 +389,7 @@ node thinks of itself.
 - **Foundry**, only to change a contract — not to run one
 
 ```bash
-cargo test --workspace          # 87 tests
+cargo test --workspace          # 100 tests
 cd contracts && forge test      # 15 tests
 ```
 
@@ -333,11 +452,11 @@ and being able to query the past is worth a great deal in a teaching tool.
 | **B** | Contract library, deployed in genesis | ✅ `v0.2.0` |
 | **C** | RPC gateway and monitoring | ✅ `v0.3.0` |
 | **D** | Policy signing and audit log | ✅ `v0.4.0` |
-| **E** | Multi-client network — three consensus clients, a bootnode, real finality | next |
-| **F** | Chainlink oracle — a contract reading an off-chain price | planned |
+| **E** | Multi-client network — three consensus clients, a bootnode, real finality | ✅ `v0.5.0` |
+| **F** | Chainlink oracle — a contract reading an off-chain price | next |
 | **G** | Blockscout and a faucet | planned |
 
-A–D is a complete, usable product on its own. E–G each add a dimension; the
+A–E is a complete, usable product on its own. E–G each add a dimension; the
 [design document](docs/design.md) has the full plan, the costs and the risks.
 
 Nothing here is audited or intended for production use. See
@@ -349,13 +468,14 @@ Nothing here is audited or intended for production use. See
 
 ```
 crates/
-  cupel/       control-plane CLI — the binary
+  cupel/       control-plane CLI — the binary, both modes
   producer/    Engine API block producer
   gateway/     capability-aware JSON-RPC gateway
   signer/      policy engine, audit log, signing service
 contracts/     Foundry — the annotated reference library
-compose/       lab.yml (the chain), observe.yml (monitoring)
+compose/       lab.yml (one node), network.yml (nine), observe.yml (monitoring)
 config/        genesis, Prometheus, Grafana provisioning
+               network/ is generated by `cupel network init`, never committed
 docs/          design document
 ```
 

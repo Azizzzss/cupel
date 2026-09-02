@@ -12,6 +12,18 @@ You need Docker running and Rust 1.91 or newer. Foundry is only needed to
 *change* a contract — the compiled bytecode is committed, so running the lab
 needs no Solidity toolchain.
 
+For the multi-client devnet:
+
+```bash
+cargo run -p cupel -- network up
+cargo run -p cupel -- network status
+```
+
+That pulls four more images and runs nine containers, so give it a few minutes
+and a few gigabytes the first time. `config/network/` is generated and ignored;
+never commit it, and never edit it by hand — `cupel network init` overwrites the
+lot.
+
 ## Before opening a pull request
 
 ```bash
@@ -45,10 +57,17 @@ provably immutable. The policy engine's default is deliberately tight. Both
 could be looser and faster; both would then be wrong in ways that surface as a
 client being told something false.
 
-**Own the parts that decide behaviour; integrate the rest.** geth, Prometheus,
-Grafana and `alloy` are dependencies. The control plane, the block producer, the
-gateway, the policy engine and the contracts are written here, because those are
-what make Cupel a lab rather than a directory of compose files.
+**Own the parts that decide behaviour; integrate the rest.** geth, Lighthouse,
+Prysm, Teku, Prometheus, Grafana, the genesis generator and `alloy` are
+dependencies. The control plane, the block producer, the gateway, the policy
+engine and the contracts are written here, because those are what make Cupel a
+lab rather than a directory of compose files.
+
+**A comment on a client flag should say what breaks without it.** Most of the
+flags in `compose/network.yml` are there because something failed in a way that
+did not name them — a lock file that reports a crash three restarts ago, a
+gas price floor that turns into empty blocks and no error. Those comments are
+the most valuable thing in the file.
 
 ## Commit messages
 
@@ -64,6 +83,11 @@ Conventional prefixes (`feat:`, `fix:`, `docs:`) are used but not enforced.
 Work follows the [roadmap](README.md#roadmap), one phase at a time, and every
 phase ends at something demoable and gets a tag. That discipline is deliberate:
 it is what stops a long project from being permanently almost-finished.
+
+Bump `version` in the workspace `Cargo.toml` in the same commit as the tag.
+Through phases A to D it was not, so `cupel --version` reported `0.1.0` on every
+one of them — a small lie, and the kind that is only ever noticed by someone
+trying to work out which build they are running.
 
 If you want to work on a later phase before an earlier one lands, say so in an
 issue first — the phases are in dependency order for a reason.

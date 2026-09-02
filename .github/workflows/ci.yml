@@ -122,3 +122,85 @@ jobs:
       - name: Tear down
         if: always()
         run: ./target/debug/cupel down || true
+  network:
+    name: network
+    # Nine containers, four images to pull and several minutes to the first
+    # finalised epoch. Too heavy for every pull request, and the only way to
+    # know that three consensus clients still agree after a dependency moves.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build
+        run: cargo build -p cupel
+
+      - name: Bring up the devnet
+        run: ./target/debug/cupel network up --detach
+
+      - name: The chain finalises
+        # Finality is the whole claim of this mode. Two thirds of the stake must
+        # agree, and the stake is split so that no single node holds it.
+        run: |
+          for _ in $(seq 1 90); do
+            # A failed request yields an empty string, and an empty string is
+            # not "0" — testing for inequality would report a chain that never
+            # answered as a chain that finalised. Insist on a positive integer.
+            epoch=$(curl -sf http://127.0.0.1:5052/eth/v1/beacon/states/head/finality_checkpoints \
+              | jq -r '.data.finalized.epoch // 0' 2>/dev/null || echo 0)
+            case "$epoch" in ''|*[!0-9]*) epoch=0 ;; esac
+            echo "finalized epoch: $epoch"
+            if [ "$epoch" -gt 0 ]; then exit 0; fi
+            sleep 10
+          done
+          echo "no finalised epoch after fifteen minutes"
+          exit 1
+
+      - name: All three clients agree
+        # Three independent implementations, one chain. A disagreement here is
+        # the most interesting failure this repository can produce.
+        run: |
+          set -e
+          for port in 5052 5152 5252; do
+            curl -sf "http://127.0.0.1:$port/eth/v1/beacon/headers/finalized" \
+              | jq -r '.data.root' >> roots.txt
+          done
+          cat roots.txt
+          test "$(sort -u roots.txt | wc -l)" -eq 1
+
+      - name: The devnet carries the same contracts as the lab
+        run: |
+          set -e
+          for port in 8555 8556 8557; do
+            RPC="http://127.0.0.1:$port"
+            test "$(cast chain-id --rpc-url $RPC)" = "31337"
+            test "$(cast call 0x00000000000000000000000000000000c0de0020 'name()(string)' --rpc-url $RPC)" \
+              = '"Cupel Token"'
+          done
+
+      - name: A transaction reaches a beacon-chain proposer
+        run: |
+          set -e
+          RPC=http://127.0.0.1:8555
+          KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+          ME=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+          cast send 0x00000000000000000000000000000000c0de0020 'mint(address,uint256)' $ME 1000000000000000000000 \
+            --rpc-url $RPC --private-key $KEY --timeout 120 >/dev/null
+          test "$(cast call 0x00000000000000000000000000000000c0de0020 'balanceOf(address)(uint256)' $ME --rpc-url $RPC)" \
+            = "1000000000000000000000 [1e21]"
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          for c in el1 cl1 vc1 el2 cl2 vc2 el3 cl3 bootnode; do
+            echo "===== cupel-$c ====="
+            docker logs "cupel-$c" 2>&1 | tail -40 || true
+          done
+
+      - name: Tear down
+        if: always()
+        run: ./target/debug/cupel network reset || true

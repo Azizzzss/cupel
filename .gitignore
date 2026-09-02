@@ -4,6 +4,11 @@
 # The Engine API secret is generated on first run, never committed.
 config/genesis/jwt.hex
 
+# The devnet: validator keys, a beacon state stamped with the moment it was made,
+# and a JWT. None of it means anything a day later, and `cupel network init`
+# rebuilds all of it in under a minute.
+config/network/
+
 # node / explorer
 node_modules/
 .next/
