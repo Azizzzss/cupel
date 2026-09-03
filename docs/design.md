@@ -313,12 +313,30 @@ disable another, and the newest fork is not automatically the right one to be on
 
 ## Budget
 
+Estimated before building, then measured. Network mode came in at a fifth of the
+guess, which is worth recording: the fear was that nine containers would be too
+heavy to leave running, and they are not.
+
 | Stage | Memory | Disk | Containers |
 |---|---|---|---|
-| Lab mode, phases A–D | ~1.5 GB | negligible | 5 |
-| Network mode, phase E | ~6 GB | ~2 GB | 9 |
-| + Phase F | ~7 GB | +2 GB | 13 |
-| + Phase G | ~11 GB | +5 GB | 16 |
+| Lab mode, phases A–D | ~1.5 GB *(est.)* | negligible | 5 |
+| Network mode, phase E | **1.2 GB measured** *(est. 6)* | **81 MB after an hour** *(est. 2 GB)* | 9 |
+| + Phase F | ~7 GB *(est.)* | +2 GB | 13 |
+| + Phase G | ~11 GB *(est.)* | +5 GB | 16 |
+
+Where phase E's memory goes, at rest:
+
+| | |
+|---|---|
+| Teku | 641 MB — half the devnet, and it is the JVM, not the work |
+| Prysm | 218 MB |
+| Lighthouse | 112 MB |
+| each geth | ~73 MB |
+| each validator client | ~27 MB |
+| the bootnode | 11 MB |
+
+Disk stays small because the chain is minutes old and empty; it grows with use,
+and `cupel network reset` returns it to nothing.
 
 ## Risks
 

@@ -19,8 +19,9 @@ cargo run -p cupel -- network up
 cargo run -p cupel -- network status
 ```
 
-That pulls four more images and runs nine containers, so give it a few minutes
-and a few gigabytes the first time. `config/network/` is generated and ignored;
+That pulls four more images the first time. Once up it is lighter than it
+sounds: nine containers taking 1.2 GB of memory between them, of which Teku is
+641 MB. `config/network/` is generated and ignored;
 never commit it, and never edit it by hand — `cupel network init` overwrites the
 lot.
 
