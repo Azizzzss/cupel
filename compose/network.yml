@@ -3,6 +3,12 @@
 # Blocks come from proposers on a beacon chain, not from a producer on the host,
 # and the chain finalises.
 #
+# The head fork is Electra, not Fulu, and none of these clients is a supernode.
+# The reasoning is in crates/cupel/src/network.rs, next to FULU_FORK_EPOCH; the
+# short version is that a hundred and twenty-eight data column subnets on top of
+# sixty-four attestation subnets broke the subscription exchange between clients,
+# and a lab should run the fork its clients agree on.
+#
 # Every address here comes from config/network/network.env, written by
 # `cupel network init`. The subnet is chosen at that point from whatever is
 # free, because a hard-coded one collides with whatever else the machine is
@@ -117,11 +123,6 @@ services:
   # mainnet: the config, the genesis state and the deposit contract block all
   # come from there.
   #
-  # --supernode is not optional here. This chain activates Fulu at genesis, so
-  # blob data is split into columns and custody is shared out across the
-  # network. Three nodes cannot reliably hold a quorum of columns between them,
-  # so each one custodies all of them.
-  #
   # --disable-packet-filter and --allow-insecure-genesis-sync are both safety
   # features that are wrong on a private network: the first rate-limits peers
   # that all share one host, the second refuses a chain with no checkpoint to
@@ -155,7 +156,6 @@ services:
       - --disable-packet-filter
       - --allow-insecure-genesis-sync
       - --subscribe-all-subnets
-      - --supernode
       - --target-peers=4
       - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
       - --metrics
@@ -280,7 +280,6 @@ services:
       - --min-sync-peers=1
       - --minimum-peers-per-subnet=0
       - --subscribe-all-subnets
-      - --supernode
       - --suggested-fee-recipient=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
       - --monitoring-host=0.0.0.0
       - --monitoring-port=8080
@@ -388,12 +387,6 @@ services:
       # would not advance.
       - --p2p-static-peers=${CL_STATIC_PEER}
       - --p2p-subscribe-all-subnets-enabled=true
-      # Teku's equivalent of --supernode: custody every data column rather than
-      # the share its stake entitles it to. Without it Teku advertised a custody
-      # group count of 21 while Lighthouse and Prysm advertised 128, and a
-      # three-node network cannot afford one member holding a seventh of the
-      # data the other two expect to fetch from it.
-      - --p2p-subscribe-all-custody-subnets-enabled=true
       - --validator-keys=/keys/teku-keys:/keys/teku-secrets
       # Teku writes a .lock beside each keystore and refuses to start if one is
       # already there. A container that is killed rather than stopped leaves

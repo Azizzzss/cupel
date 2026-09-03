@@ -85,11 +85,17 @@ validators and a chain that finalises.
   which is a considerably worse outcome than a connection refused. Both the
   gateway and the signer now take their port before anything announces it, and
   say which port and what to stop when they cannot.
-- **Teku custodied a seventh of the data columns the other two expected.** It
-  advertised `custody_group_count: 21` against Lighthouse's and Prysm's 128,
-  because `--p2p-subscribe-all-custody-subnets-enabled` is separate from
-  `--p2p-subscribe-all-subnets-enabled`. With it set, the chain went from a
-  missed slot every ten or so to none at all.
+- **The chain runs Electra, not Fulu.** It was generated at the tip because the
+  generator defaults there, and that cost client interop. Fulu splits blob data
+  into a hundred and twenty-eight column subnets; three nodes cannot cover that
+  by stake, so every node had to custody everything and subscribe to roughly two
+  hundred gossip topics. At that size the subscription exchange between clients
+  broke: Teku held a healthy connection to Lighthouse, received gossip
+  perfectly, and believed its peer was subscribed to nothing — so all seventeen
+  blocks it proposed and every attestation from its twenty-one validators were
+  published into the void. The chain still finalised, on the other two nodes'
+  67.19%, which is how close that came to going unnoticed. On Electra, with no
+  supernodes, Teku's failed publishes go from a hundred and forty-seven to zero.
 
 ---
 

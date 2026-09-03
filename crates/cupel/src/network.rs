@@ -50,6 +50,9 @@ const SECONDS_PER_SLOT: u64 = 6;
 /// waits.
 const GENESIS_DELAY: u64 = 30;
 
+/// Never. The generator's way of saying a fork does not happen on this chain.
+const NEVER: &str = "18446744073709551615";
+
 /// The mnemonic every validator key is derived from. It is the generator's own
 /// default and is published in its repository; the keys it produces are
 /// worthless anywhere but here.
@@ -156,6 +159,25 @@ pub(crate) async fn init(root: &Path) -> Result<()> {
         &format!("GENESIS_DELAY={GENESIS_DELAY}"),
         "-e",
         &format!("SECONDS_PER_SLOT={SECONDS_PER_SLOT}"),
+        // Electra is the head of this chain, not Fulu, and that is a deliberate
+        // step back from the tip.
+        //
+        // Fulu splits blob data into a hundred and twenty-eight column subnets.
+        // Three nodes cannot cover that between them by stake, so each has to
+        // custody everything, and each then subscribes to roughly two hundred
+        // gossip topics. At that size the subscription exchange between clients
+        // stopped working: Teku held a healthy connection to Lighthouse,
+        // received gossip perfectly, and believed its peer was subscribed to
+        // nothing — so all seventeen blocks it proposed, and every attestation
+        // from its twenty-one validators, were published into the void. The
+        // chain still finalised, on the other two nodes' 67%, which is how
+        // close that failure came to going unnoticed.
+        //
+        // A lab should run the fork its clients agree on rather than the newest
+        // one. PeerDAS interop on a three-node private network is a research
+        // problem; teaching people about ERC-20 allowances is not.
+        "-e",
+        &format!("FULU_FORK_EPOCH={NEVER}"),
         // The premine is written out explicitly rather than derived from the
         // mnemonic, so network mode funds the same four accounts as lab mode.
         "-e",
@@ -786,7 +808,7 @@ fn banner(gateway: bool) {
         );
     }
     println!();
-    println!("  Chain id     31337, {VALIDATORS} validators, {SECONDS_PER_SLOT}s slots");
+    println!("  Chain id     31337, {VALIDATORS} validators, {SECONDS_PER_SLOT}s slots, Electra");
     println!("  Contracts    the same addresses as lab mode");
     println!();
     println!("  The first finalised epoch is a few minutes away.");

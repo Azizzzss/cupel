@@ -292,8 +292,24 @@ never justified, which is why `cupel network status` shows justification, finali
 and peer count beside the block height: the three numbers that were zero while
 everything else looked right.
 
-**Three clients means three peering stories, and a change that fixes one can
-silently disable another in a way that still looks healthy.**
+**And a fourth failure that was not peering at all.** The generator defaults to
+the tip of the fork schedule, so the chain came up on Fulu. Fulu splits blob data
+across a hundred and twenty-eight column subnets, shared out by stake — and three
+nodes cannot cover that between them, so every node had to custody everything and
+subscribe to roughly two hundred gossip topics. At that size the subscription
+exchange between clients stopped working, and Teku published nothing whatsoever:
+seventeen blocks proposed, seventeen failures, twenty-one validators silent. The
+chain still finalised, on the other two nodes' 67.19% of the stake, one tenth of
+a percent above the threshold.
+
+So network mode targets **Electra**, and Teku's failed publishes go from a
+hundred and forty-seven to zero. Running the newest fork was never the point;
+the point is a lab where three clients agree, and that means running the fork
+they have had time to agree on. PeerDAS interop on a three-node private network
+is a research problem, and this is a teaching tool.
+
+**Three clients means three peering stories, a change that fixes one can silently
+disable another, and the newest fork is not automatically the right one to be on.**
 
 ## Budget
 

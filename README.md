@@ -197,7 +197,7 @@ cupel network up
   node2   Prysm       rpc http://127.0.0.1:8556  beacon http://127.0.0.1:5152
   node3   Teku        rpc http://127.0.0.1:8557  beacon http://127.0.0.1:5252
 
-  Chain id     31337, 64 validators, 6s slots
+  Chain id     31337, 64 validators, 6s slots, Electra
   Contracts    the same addresses as lab mode
 ```
 
@@ -239,12 +239,23 @@ all. Teku, given the same TCP address, connected properly and received gossip
 perfectly, but never joined the gossip mesh, so every message it tried to publish
 went nowhere.
 
-Every time, blocks propagated flawlessly — no missed slots, every client agreeing
-on every block — because a block only has to reach the network once, and one peer
-is enough for that. Attestations need a mesh. So the chain looked perfect and
-simply never justified, and the only signal was a number that stayed at zero.
-That is why `cupel network status` shows justification, finality and peer count
-beside the block height, rather than reporting that the nodes are up.
+The last one was not a peering fix at all. Cupel generated its chain at the tip
+of the fork schedule because the generator defaults there, which meant Fulu, and
+Fulu splits blob data across a hundred and twenty-eight column subnets. Three
+nodes cannot cover that between them, so each had to custody everything and
+subscribe to about two hundred gossip topics — and at that size the subscription
+exchange between clients stopped working. Teku published nothing at all:
+seventeen proposed blocks, seventeen failures, and its twenty-one validators
+attesting into the void. **The devnet targets Electra**, and Teku's failed
+publishes went to zero. A lab should run the fork its clients agree on, not the
+newest one.
+
+Every time, blocks propagated — no client ever disagreed about a block it had —
+because a block only has to reach the network once and one peer is enough for
+that. Attestations need a gossip mesh. So the chain looked healthy and simply
+never justified, and the only signal was a number that stayed at zero. That is
+why `cupel network status` shows justification, finality and peer count beside
+the block height, rather than reporting that the nodes are up.
 
 `cupel observe` brings up a second dashboard for this mode. The panel that
 matters is **Clients disagreeing** — the gap between the furthest-ahead and
