@@ -269,9 +269,14 @@ services:
       - --p2p-tcp-port=9000
       - --p2p-udp-port=9000
       - --bootstrap-node=${CL_BOOTNODE}
-      # Discovery finds strangers on a large network. This one has three members
-      # and knows all of them, so node 1 is also dialled directly.
-      - --peer=${CL_STATIC_PEER}
+      # No --peer here, unlike Teku below, and the omission is deliberate.
+      # CL_STATIC_PEER is a /tcp/ multiaddr because that is the form every
+      # client accepts. Given one, Prysm dials it over TCP instead of finding
+      # node 1 over QUIC through discovery — and that TCP connection half-opens:
+      # node 1 lists it as connected while Prysm's own registry records it as
+      # disconnected, so Prysm reports no peers, joins no gossip mesh, and
+      # contributes no attestations. Blocks still propagate, so the chain looks
+      # healthy right up until you notice nothing is justifying.
       - --min-sync-peers=1
       - --minimum-peers-per-subnet=0
       - --subscribe-all-subnets

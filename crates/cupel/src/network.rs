@@ -366,8 +366,14 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
     // The gateway written in phase C has, until now, had one upstream to choose
     // between. This is what it was for: three independent nodes, and a client
     // that keeps working when one of them stops. Stop a node and requests move
-    // to the other two; the chain keeps finalising, because two thirds of the
-    // stake is still voting.
+    // to the other two.
+    //
+    // The chain keeps producing blocks through that, but it stops finalising,
+    // and the arithmetic says it must: finality needs *more* than two thirds of
+    // the stake, and three nodes holding a third each leave exactly two thirds
+    // when one goes. No split of three nodes survives losing one. That is worth
+    // watching rather than working around — it is the 2/3 threshold being a
+    // threshold, on a chain small enough to see it happen.
     let gateway = Arc::new(Gateway::new(
         GatewayConfig::default(),
         NODES
@@ -432,18 +438,59 @@ pub(crate) async fn status(_root: &Path) -> Result<()> {
         .build()?;
 
     println!();
-    println!("  node    consensus     block   slot   justified   finalized");
-    println!("  ------------------------------------------------------------");
+    println!("  node    consensus     block   slot   justified   finalized   peers");
+    println!("  --------------------------------------------------------------------");
+    let mut peerless = Vec::new();
     for node in NODES {
         let block = block_number(&client, node.rpc).await;
         let (slot, justified, finalized) = beacon_state(&client, node.beacon).await;
+        let peers = peer_count(&client, node.beacon).await;
+        if peers == "0" {
+            peerless.push(node.consensus);
+        }
         println!(
-            "  {:<7} {:<12} {:>6} {:>6} {:>11} {:>11}",
-            node.name, node.consensus, block, slot, justified, finalized
+            "  {:<7} {:<12} {:>6} {:>6} {:>11} {:>11} {:>7}",
+            node.name, node.consensus, block, slot, justified, finalized, peers
         );
     }
     println!();
+
+    // Peers earn a column because a client with none is the failure this mode
+    // actually produces, and it is invisible everywhere else: blocks still
+    // propagate, every client still agrees, no slot is missed — and nothing
+    // justifies, because a client in no gossip mesh publishes its attestations
+    // into nothing.
+    if !peerless.is_empty() {
+        println!(
+            "  {} has no peers — it will follow the chain and attest to nothing.",
+            peerless.join(" and ")
+        );
+        println!();
+    }
     Ok(())
+}
+
+/// How many peers a beacon node believes it is connected to.
+///
+/// Each client counts this differently and one of them is capable of reporting
+/// none while it is demonstrably gossiping, so this is what the node says about
+/// itself, not a measurement.
+async fn peer_count(client: &reqwest::Client, beacon: &str) -> String {
+    let Ok(response) = client
+        .get(format!("{beacon}/eth/v1/node/peer_count"))
+        .send()
+        .await
+    else {
+        return "—".into();
+    };
+    match response.json::<Value>().await {
+        Ok(value) => value
+            .pointer("/data/connected")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "—".into()),
+        Err(_) => "—".into(),
+    }
 }
 
 async fn block_number(client: &reqwest::Client, rpc: &str) -> String {
@@ -744,9 +791,12 @@ fn banner(gateway: bool) {
     println!("  cupel network status shows what all three think of the chain.");
     if gateway {
         println!();
-        println!("  Stop a node and watch the rest carry on:");
+        println!("  Stop a node. The gateway routes around it and the chain keeps");
+        println!("  producing blocks — but it stops finalising, because finality");
+        println!("  needs more than two thirds and three nodes leave exactly two.");
         println!("    docker stop cupel-el2");
         println!("    curl -s {}/health", crate::GATEWAY_URL);
+        println!("    cupel network status");
         println!();
         println!("  Ctrl-C stops the gateway. The devnet keeps running.");
     }

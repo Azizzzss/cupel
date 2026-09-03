@@ -203,25 +203,45 @@ cupel network up
 
 Nine containers: a discovery bootnode, three geth nodes, three different
 consensus clients, and the validator clients driving them. Sixty-four validators
-split 22/21/21, so **no single node can finalise the chain alone** — two thirds
-of the stake has to agree, and that means at least two of the three clients
-agreeing, in production code, about a chain they each built independently.
+split 22/21/21, so **no single node can finalise the chain alone** — more than
+two thirds of the stake has to agree, and that means at least two of the three
+clients agreeing, in production code, about a chain they each built
+independently.
+
+The same arithmetic has a second edge worth knowing: stop any one node and the
+chain keeps producing blocks but stops finalising, because a third each leaves
+*exactly* two thirds when one goes, and the threshold is a strict one. No split
+of three nodes survives losing one. It resumes the moment the node is back.
 
 ```bash
 cupel network status
 ```
 
 ```
-  node    consensus     block   slot   justified   finalized
-  ------------------------------------------------------------
-  node1   Lighthouse      147    151          16          15
-  node2   Prysm           147    151          16          15
-  node3   Teku            147    151          16          15
+  node    consensus     block   slot   justified   finalized   peers
+  --------------------------------------------------------------------
+  node1   Lighthouse      147    151          16          15       2
+  node2   Prysm           147    151          16          15       1
+  node3   Teku            147    151          16          15       1
 ```
 
-Three clients, three numbers, and they match. That is the whole point of the
-mode: not that a chain runs, but that independent implementations agree about
-what it contains.
+Three clients, three sets of numbers, and they match. That is the whole point of
+the mode: not that a chain runs, but that independent implementations agree
+about what it contains.
+
+Peers get a column because a client with none is the failure this mode actually
+produces, and it is invisible in every other number on the line.
+
+**A note on what "it works" looks like.** Getting three clients onto one chain
+took three different peering fixes, and the failures were not loud. Prysm spent
+one round dialling a TCP address instead of finding its peer over QUIC; the
+connection half-opened, so node 1 listed it as connected and Prysm counted no
+peers at all. Blocks still propagated perfectly — no missed slots, every client
+agreeing on every block — because a block only has to reach the network once.
+Attestations did not, because a client in no gossip mesh publishes into nothing.
+The chain ran flawlessly and never justified. The only signal was a number that
+stayed at zero, which is why `cupel network status` puts justification and
+finality next to the block height rather than reporting that the nodes are up.
 
 `cupel observe` brings up a second dashboard for this mode. The panel that
 matters is **Clients disagreeing** — the gap between the furthest-ahead and

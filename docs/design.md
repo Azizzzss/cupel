@@ -214,6 +214,7 @@ reasons that had nothing to do with consensus:
 | Teku | crash loop, stack trace about a log appender | runs as an unprivileged user, and a named volume mounted where the image creates no directory arrives owned by root |
 | Teku, again | `keystore file … already in use` | it writes a `.lock` beside each key and a container that is killed rather than stopped leaves them behind, so every restart after a crash reports a lock rather than the crash |
 | Prysm | refused to start | `--accept-terms-of-use` |
+| Prysm, again | a chain that never justified | dialled a `/tcp/` static peer instead of finding node 1 over QUIC, and the TCP connection half-opened — no error, no missed blocks, no attestations |
 
 **"Post-merge genesis is the fiddliest single step"** — right about the
 difficulty, wrong about the remedy. The plan said to lift the configuration from
@@ -234,13 +235,29 @@ Two things it does not do for you:
   everywhere else trains you to do, produces a number a hundred times too large
   and a convincing false alarm.
 
-**And one the plan did not anticipate: discovery is not enough on a network this
-small.** Every consensus client had the correct bootnode ENR and the mesh still
-did not form — Teku sat isolated, contributing nothing, while the chain was one
-node short of the two thirds it needs to finalise. Discovery is a protocol for
-finding strangers on a large network. Three nodes that know about each other
-should dial each other: `network up` hands out node 1's libp2p address alongside
-its ENR, and discovery runs beside it rather than instead of it.
+**And one the plan did not anticipate: peering is per-client, and the fix for one
+broke another.** Teku found nobody through discovery — it sat isolated with the
+correct bootnode record in its configuration while the chain was a node short of
+the two thirds it needs. So `network up` began handing out node 1's libp2p
+address alongside its ENR, and Teku connected.
+
+Giving the same address to Prysm broke Prysm. `CL_STATIC_PEER` is a `/tcp/`
+multiaddr, because that is the form every client's static-peer flag accepts.
+Given one, Prysm dialled it over TCP instead of finding node 1 over QUIC through
+discovery, and that TCP connection half-opened: node 1 listed the peer as
+connected while Prysm's own registry recorded it as disconnected and every one
+of its transport counters read zero.
+
+The symptom was not an error. Blocks propagated perfectly — no missed slots, all
+three clients agreeing on every block — because a block only has to reach the
+network once. Attestations did not, because a client with no peer in a gossip
+mesh publishes into nothing. So the chain ran flawlessly and never justified, and
+the only signal was a number that stayed at zero.
+
+Prysm therefore gets the bootnode record and nothing else, Teku gets both, and
+each keeps the path it can actually use. The general lesson is the uncomfortable
+one: **three clients means three peering stories, and a change that fixes one can
+silently disable another in a way that still looks healthy.**
 
 ## Budget
 

@@ -23,8 +23,10 @@ validators and a chain that finalises.
   ethPandaOps' generator, pinned to `6.2.1`, with the fork schedule active from
   block zero.
 - `cupel network up` / `init` / `down` / `reset` / `status`. Status queries all
-  three nodes and prints their block, slot, justified and finalised epochs side
-  by side, because three clients agreeing is the thing worth showing.
+  three nodes and prints their block, slot, justified and finalised epochs and
+  peer count side by side, because three clients agreeing is the thing worth
+  showing — and because a client with no peers is the failure this mode actually
+  produces, invisible in every other number on the line.
 - **Prometheus scrapes both layers** of all three nodes, and a second Grafana
   dashboard, *Cupel — network*, graphs what they each say. Targets that are down
   in lab mode report as down, which is the honest answer.
@@ -38,9 +40,13 @@ validators and a chain that finalises.
   chain to resume.** Left at the generator's default the chain starts in 1970
   and every client walks three hundred million empty slots first; regenerated
   unconditionally, a restart would silently replace the chain under the data.
-- **Discovery alone did not form the mesh.** Every client had the correct
-  bootnode record and Teku still sat isolated while the chain was one node short
-  of finalising. Node 1's libp2p address is now handed out alongside its ENR.
+- **Peering is per-client, and each needs a different answer.** Teku found nobody
+  through discovery and sat isolated, so `up` hands out node 1's libp2p address
+  alongside its ENR. Giving the same address to Prysm broke Prysm: it dialled the
+  `/tcp/` multiaddr instead of finding node 1 over QUIC, and that connection
+  half-opened — node 1 listed the peer as connected while Prysm counted none.
+  Blocks still propagated, so nothing looked wrong; attestations did not, so the
+  chain never justified. Prysm gets the bootnode record and nothing else.
 - **The subnet is chosen, not fixed.** A hard-coded one collided with an
   unrelated project, and Docker's error for that names no culprit. Ranges Docker
   allocates itself and the range WSL uses for its own interface are both skipped.
