@@ -83,18 +83,24 @@ MetaMask connects at chain id **31337**; import any key above.
 
 | | | Written here |
 |---|---|---|
-| **Control plane** | `cupel up` — health-gated startup, clean teardown | ✅ |
+| **Control plane** | `cupel up` and `cupel network up` — two modes, health-gated startup, clean teardown | ✅ |
 | **Block producer** | Drives geth over the Engine API, because geth cannot make blocks alone | ✅ |
+| **Devnet orchestration** | Genesis stamped at start-up, a subnet chosen from what is free, and nodes 2 and 3 started with an identity node 1 did not have until it was running | ✅ |
 | **Contract library** | Annotated ERC-20/Permit, ERC-4626, WETH, deployed in genesis | ✅ |
 | **RPC gateway** | Capability routing, health, failover, caching, metrics | ✅ |
 | **Policy signer** | A held key behind ceilings, allowlists and budgets, with an audit log | ✅ |
 | Execution client | geth | integrated |
+| Consensus clients | Lighthouse, Prysm, Teku — one each, on purpose | integrated |
+| Genesis and keys | ethPandaOps' generator, pinned | integrated |
 | Monitoring | Prometheus, Grafana | integrated |
 | Signing primitives | `alloy` | integrated |
 
 The line matters: a project that is only compose files and Grafana JSON reads as
 configuration, not engineering. Cupel writes the parts that decide how the lab
-behaves and integrates the parts already better solved.
+behaves and integrates the parts already better solved. The devnet is the
+clearest case of both at once — the clients and the genesis are somebody else's
+work, and everything about *when* and *in what order* they start is not, because
+a compose file cannot wait on a value one of its own containers produces.
 
 ---
 
