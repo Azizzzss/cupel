@@ -71,6 +71,13 @@ validators and a chain that finalises.
   took the consensus layer apart. The identity is now fetched only when it is
   not already known, which is correct because node 1 keeps its key, address and
   ports across restarts and a stale sequence number still bootstraps.
+- **A gateway that failed to bind still announced its address.** `serve` bound
+  the port inside a spawned task, so the error went to a `JoinHandle` nobody
+  read and the banner promised an RPC on 8545 regardless. The address even
+  answered — because what held it was another Cupel, serving a different chain,
+  which is a considerably worse outcome than a connection refused. Both the
+  gateway and the signer now take their port before anything announces it, and
+  say which port and what to stop when they cannot.
 - **Teku custodied a seventh of the data columns the other two expected.** It
   advertised `custody_group_count: 21` against Lighthouse's and Prysm's 128,
   because `--p2p-subscribe-all-custody-subnets-enabled` is separate from

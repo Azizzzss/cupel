@@ -200,14 +200,27 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 /// Serve the signer's API on `address`.
+/// Bind `address` and serve until the task is dropped.
+///
+/// Prefer [`serve_on`] when the caller wants to know that the port was actually
+/// obtained: spawned into a task, a failure here is a returned error nobody
+/// reads, and the program goes on to announce an address it does not hold.
 pub async fn serve(signer: Arc<Signer>, address: SocketAddr) -> std::io::Result<()> {
+    let listener = tokio::net::TcpListener::bind(address).await?;
+    serve_on(signer, listener).await
+}
+
+/// Serve on a listener the caller has already bound.
+pub async fn serve_on(
+    signer: Arc<Signer>,
+    listener: tokio::net::TcpListener,
+) -> std::io::Result<()> {
     let app = Router::new()
         .route("/", post(rpc))
         .route("/policy", get(policy_endpoint))
         .route("/audit", get(audit_endpoint))
         .with_state(signer);
 
-    let listener = tokio::net::TcpListener::bind(address).await?;
     axum::serve(listener, app).await
 }
 

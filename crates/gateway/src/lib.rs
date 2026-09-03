@@ -338,14 +338,27 @@ fn error_response(id: Value, code: i32, message: String) -> Value {
 }
 
 /// Serve JSON-RPC on `address` until the process ends.
+/// Bind `address` and serve until the task is dropped.
+///
+/// Prefer [`serve_on`] when the caller wants to know that the port was actually
+/// obtained: spawned into a task, a failure here is a returned error nobody
+/// reads, and the program goes on to announce an address it does not hold.
 pub async fn serve(gateway: Arc<Gateway>, address: SocketAddr) -> std::io::Result<()> {
+    let listener = tokio::net::TcpListener::bind(address).await?;
+    serve_on(gateway, listener).await
+}
+
+/// Serve on a listener the caller has already bound.
+pub async fn serve_on(
+    gateway: Arc<Gateway>,
+    listener: tokio::net::TcpListener,
+) -> std::io::Result<()> {
     let app = Router::new()
         .route("/", post(rpc))
         .route("/metrics", get(prometheus))
         .route("/health", get(health))
         .with_state(gateway);
 
-    let listener = tokio::net::TcpListener::bind(address).await?;
     axum::serve(listener, app).await
 }
 

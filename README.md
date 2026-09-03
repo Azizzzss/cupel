@@ -229,9 +229,6 @@ Three clients, three sets of numbers, and they match. That is the whole point of
 the mode: not that a chain runs, but that independent implementations agree
 about what it contains.
 
-Peers get a column because a client with none is the failure this mode actually
-produces, and it is invisible in every other number on the line.
-
 **A note on what "it works" looks like.** Getting three clients onto one chain
 took three different peering fixes, and the failures were not loud. Prysm spent
 one round dialling a TCP address instead of finding its peer over QUIC; the
@@ -409,7 +406,7 @@ Network mode uses its own ports, so both modes can run at once:
 - **Foundry**, only to change a contract — not to run one
 
 ```bash
-cargo test --workspace          # 100 tests
+cargo test --workspace          # 103 tests
 cd contracts && forge test      # 15 tests
 ```
 
@@ -442,6 +439,15 @@ provided=0 updated=1,000,000` and raises the floor to 0.001 gwei. One wei is the
 lowest it honours. The matching trap is `--gpo.ignoreprice`: lower it and geth's
 own fee oracle starts suggesting a tip beneath its own miner floor, so clients
 faithfully build transactions the node will never mine.
+
+**Announce nothing you have not got.** The gateway and the signer are spawned
+into tasks, and `serve` used to bind the port inside them — so a port already
+held returned an error to a `JoinHandle` nobody read, and the banner promised an
+RPC at an address the process did not have. The address answered, too, because
+what held it was another Cupel serving a different chain: strictly worse than a
+refused connection, because everything downstream looks like it is working.
+Both now take the port first and report which one, and what to stop, when they
+cannot.
 
 **A side process must never take the serving path down with it.** Block
 production originally returned its error, which unwound `cupel up` and killed the

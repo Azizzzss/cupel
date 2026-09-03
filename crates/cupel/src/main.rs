@@ -174,6 +174,26 @@ async fn main() -> Result<()> {
     }
 }
 
+/// Take a port before anything announces it.
+///
+/// Binding inside a spawned task hides the one failure that matters here.
+/// `serve` returns its error to a `JoinHandle` nobody reads, so a port already
+/// held by something else produced a banner promising an RPC at an address this
+/// process did not have — and the address answered, because the other process
+/// was still on it, with a different chain.
+pub(crate) async fn bind(address: &str, what: &str) -> Result<tokio::net::TcpListener> {
+    let socket: SocketAddr = address.parse().expect("a constant address parses");
+    tokio::net::TcpListener::bind(socket)
+        .await
+        .with_context(|| {
+            format!(
+                "could not put the {what} on {address} — something else is already \
+                 listening there. Another cupel, perhaps: `cupel down`, \
+                 `cupel network down`."
+            )
+        })
+}
+
 /// Walk upward from the working directory looking for the compose file.
 fn find_root() -> Result<PathBuf> {
     let mut directory = std::env::current_dir()?;
@@ -218,8 +238,8 @@ async fn up(root: &Path, block_time: u64, keep: bool) -> Result<()> {
     ));
     gateway.probe_once().await;
 
-    let address: SocketAddr = GATEWAY_ADDR.parse().expect("a constant address parses");
-    let serving = tokio::spawn(cupel_gateway::serve(Arc::clone(&gateway), address));
+    let listener = bind(GATEWAY_ADDR, "gateway").await?;
+    let serving = tokio::spawn(cupel_gateway::serve_on(Arc::clone(&gateway), listener));
     let probing = tokio::spawn(Arc::clone(&gateway).probe_forever());
 
     // The signing service holds one key under a policy. Nothing in the lab is
@@ -233,8 +253,8 @@ async fn up(root: &Path, block_time: u64, keep: bool) -> Result<()> {
         },
         &[DEV_ACCOUNTS[TREASURY].1.to_string()],
     )?);
-    let signer_address: SocketAddr = SIGNER_ADDR.parse().expect("a constant address parses");
-    let signing = tokio::spawn(cupel_signer::serve(Arc::clone(&signer), signer_address));
+    let signer_listener = bind(SIGNER_ADDR, "signer").await?;
+    let signing = tokio::spawn(cupel_signer::serve_on(Arc::clone(&signer), signer_listener));
 
     banner(&head, block_time);
 
@@ -482,6 +502,40 @@ fn short(hash: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_taken_port_is_reported_rather_than_announced() {
+        // The bug this replaces: `serve` bound inside a spawned task, so a port
+        // already held returned an error to a JoinHandle nobody read, and the
+        // banner went on to promise an RPC at an address this process did not
+        // have. Worse, the address answered — because the process holding it was
+        // another cupel, serving a different chain.
+        let held = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let address = held.local_addr().expect("bound").to_string();
+
+        let error = bind(&address, "gateway")
+            .await
+            .expect_err("the port is held");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("already listening"),
+            "the message should say what is wrong: {message}"
+        );
+        assert!(
+            message.contains(&address),
+            "and which port it is about: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_free_port_binds() {
+        let listener = bind("127.0.0.1:0", "gateway")
+            .await
+            .expect("a free port binds");
+        assert_ne!(listener.local_addr().expect("bound").port(), 0);
+    }
 
     #[test]
     fn hashes_shorten_predictably() {

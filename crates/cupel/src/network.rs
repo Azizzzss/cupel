@@ -14,7 +14,6 @@
 //! second wave of nodes only once the first has an ENR to give them.
 
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -383,10 +382,11 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
     ));
     gateway.probe_once().await;
 
-    let address: SocketAddr = crate::GATEWAY_ADDR
-        .parse()
-        .expect("a constant address parses");
-    let serving = tokio::spawn(cupel_gateway::serve(Arc::clone(&gateway), address));
+    // Bound here rather than inside the spawned task, so that a port already
+    // held — by lab mode, or by a devnet gateway left running — is reported
+    // instead of announced.
+    let listener = crate::bind(crate::GATEWAY_ADDR, "gateway").await?;
+    let serving = tokio::spawn(cupel_gateway::serve_on(Arc::clone(&gateway), listener));
     let probing = tokio::spawn(Arc::clone(&gateway).probe_forever());
 
     banner(true);
