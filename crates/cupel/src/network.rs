@@ -902,6 +902,32 @@ mod tests {
     }
 
     #[test]
+    fn the_fork_choice_and_the_client_flags_agree() {
+        // Two halves of one decision, in two files. Turning Fulu back on
+        // without making every node a supernode leaves a three-node network
+        // unable to cover data column custody; making them supernodes without
+        // Fulu is two hundred gossip topics for no reason, which is what broke
+        // the subscription exchange between clients in the first place.
+        let compose = include_str!("../../../compose/network.yml");
+        let flags = [
+            "--supernode",
+            "--p2p-subscribe-all-custody-subnets-enabled=true",
+        ];
+        for flag in flags {
+            // A comment may mention it; a command line may not.
+            let used = compose
+                .lines()
+                .filter(|line| line.trim_start().starts_with("- "))
+                .any(|line| line.contains(flag));
+            assert!(
+                !used,
+                "{flag} is set, but this chain disables Fulu — turn both on or neither"
+            );
+        }
+        assert_eq!(NEVER, "18446744073709551615", "Fulu must be disabled");
+    }
+
+    #[test]
     fn peers_are_pointed_at_quic_on_the_port_compose_opens() {
         let address = static_peer("172.24.0.21", "16Uiu2HAmAb");
         assert_eq!(address, "/ip4/172.24.0.21/udp/9001/quic-v1/p2p/16Uiu2HAmAb");
