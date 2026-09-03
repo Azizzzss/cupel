@@ -16,9 +16,9 @@ deliberate convenience — needing a faucet to get test tokens helps nobody — 
 it means the contracts in this repository must never be deployed anywhere that
 matters.
 
-**The contracts are teaching material, not a library.** They are written to
-demonstrate real failure modes, and some of them deliberately do *not* defend
-against the attack being demonstrated. Read the comments before copying
+**The contracts are teaching material, not a library.** They are written to be
+read and traced rather than deployed — short, heavily annotated, and without the
+hardening a production implementation needs. Read the comments before copying
 anything; use OpenZeppelin or Solady for real work.
 
 **Everything binds to localhost.** The gateway, the signer, the Engine API,

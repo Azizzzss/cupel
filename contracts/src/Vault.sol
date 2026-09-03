@@ -44,7 +44,7 @@ contract Vault {
     ///
     /// @dev Reading the balance rather than tracking a counter is what makes the
     ///      share price rise when someone donates tokens — and what makes the
-    ///      classic inflation attack possible on an empty vault. See
+    ///      share price move sharply on a nearly empty vault. See
     ///      `test/Vault.t.sol`.
     function totalAssets() public view returns (uint256) {
         return asset.balanceOf(address(this));
@@ -75,7 +75,7 @@ contract Vault {
     function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
         shares = convertToShares(assets);
         // Rounding down means a small enough deposit buys zero shares. Taking
-        // the assets anyway would be theft, so refuse instead.
+        // the assets anyway would be a silent loss, so refuse instead.
         if (shares == 0) revert ZeroShares();
 
         // Pull first, mint second. The share price is read inside

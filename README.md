@@ -1,13 +1,18 @@
 # Cupel
 
-**A local Ethereum laboratory.** One command gives you a real chain in about
-eight seconds — no sync, no download — with annotated reference contracts
-already deployed, a gateway in front of it, a signer holding a key under policy,
-and dashboards showing what clients actually experienced.
+**A local Ethereum laboratory — the machinery, with the lid off.**
 
-A second command gives you a **real network** instead: three execution clients
-paired with Lighthouse, Prysm and Teku, sixty-four validators, a discovery
-bootnode, and a chain that genuinely finalises. Same contracts, same addresses.
+Ethereum is two peer-to-peer networks, a handful of ports and an authenticated
+handshake between two programs that do not trust each other. You can read about
+that. You cannot normally *watch* it, because every network that runs it is
+either too large to see or too simplified to be real.
+
+Cupel gives you both. One command gives you a working chain in about eight
+seconds — no sync, no download — with annotated reference contracts already
+deployed, a gateway in front of it and dashboards behind it. A second command
+gives you a **real network**: three execution clients paired with Lighthouse,
+Prysm and Teku, sixty-four validators, a discovery bootnode, and a chain that
+genuinely reaches finality. Same contracts, same addresses, running on a laptop.
 
 > A **cupel** is the porous bone-ash vessel used in fire assay. You heat an alloy
 > inside it; the base metals oxidise into the walls, and what remains is the pure
@@ -17,25 +22,45 @@ bootnode, and a chain that genuinely finalises. Same contracts, same addresses.
 
 ## The idea
 
-You want to understand the ERC-20 `approve()` race. Today your options are to
-read a blog post, or to write a mock test that passes and teaches you nothing
-about timing. Neither lets you *watch it happen*.
+Since the merge, an Ethereum node is two programs. One executes transactions and
+knows nothing about time; the other decides when a block happens and knows
+nothing about what is in it. They talk over a single authenticated port, four
+calls per block, and that conversation is the hinge the whole network turns on.
 
-Cupel is built for that gap. Spin up a chain and the contracts are already there
-at documented addresses — heavily commented, each one marking something that has
-cost real money. Send the two approvals. Watch the spender take both. Read the
-logs. You understand the attack because you performed it.
+Almost nobody has seen it. On mainnet it is buried under a terabyte of history
+and a thousand peers. In a development node it does not happen at all — Anvil
+and Hardhat skip consensus entirely, which is the right trade for a unit test
+and useless for understanding what a chain *is*.
+
+Cupel exists to make that machinery visible and small enough to hold:
+
+- **Watch a block being made.** Four Engine API calls, authenticated with a
+  shared secret, one of them carrying the payload the execution client just
+  built. In lab mode the thing making those calls is 500 lines you can read.
+- **Watch consensus happen.** Slots, epochs, attestations, justification,
+  finality — as numbers that move, on a chain small enough that every validator
+  is yours.
+- **Watch three implementations agree.** Lighthouse, Prysm and Teku, written by
+  different teams in different languages, arriving at the same finalised block.
+  Client diversity stops being a slogan when you can print all three answers.
+- **Watch a network form.** Nodes told only where a bootnode is, discovering each
+  other, gossiping blocks and attestations.
+- **Read the contracts, then call them.** ERC-20 with permits, ERC-4626, WETH —
+  annotated implementations at fixed addresses, so a standard becomes something
+  you invoke rather than something you skim.
 
 Every tool nearby is built for a different job:
 
 | | Built for | Why it isn't this |
 |---|---|---|
-| **Anvil · Hardhat Node** | Fast unit tests | One node, no consensus, nothing around it |
-| **Kurtosis** | Client teams testing *clients* | A test harness, not a place to learn contracts |
-| **eth-docker · Sedge** | Staking operations | Points at mainnet; nothing to experiment on |
+| **Anvil · Hardhat Node** | Fast unit tests | One node, no consensus — the interesting half is missing |
+| **Kurtosis** | Client teams testing *clients* | A test harness, not a place to learn from |
+| **eth-docker · Sedge** | Staking operations | Points at mainnet; nothing to take apart |
 | **Blockscout · Otterscan** | Viewing a chain | A component to integrate, not a stack |
 
-Nobody packages a chain as a **laboratory**. That is the whole project.
+Nobody packages a chain as a **laboratory** — somewhere the parts are exposed on
+purpose, and the point is understanding rather than throughput. That is the whole
+project.
 
 ---
 
@@ -107,13 +132,15 @@ a compose file cannot wait on a value one of its own containers produces.
 ## The contract library
 
 Three contracts exist at block zero, at addresses whose last digits name the
-standard:
+standard they implement. They are there so a standard is something you can call
+rather than something you read about — `cast call` a real ERC-20 and read the
+event it emits, on a chain where you own every account:
 
 | | Address | |
 |---|---|---|
-| `Token` | `0x…c0de0020` | ERC-20 with EIP-2612 permits. Anyone may mint. |
-| `Vault` | `0x…c0de4626` | ERC-4626 over `Token`, rounding on display. |
-| `Weth` | `0x…c0de0009` | Wrapped ether. |
+| `Token` | `0x…c0de0020` | ERC-20 with EIP-2612 permits. Anyone may mint, so you always have supply. |
+| `Vault` | `0x…c0de4626` | ERC-4626 over `Token` — deposits, shares, and the rounding between them. |
+| `Weth` | `0x…c0de0009` | Wrapped ether: the contract that turns the native asset into a token. |
 
 **They are not deployed by a transaction.** Their runtime bytecode is written
 into the genesis file, so they exist before the first block, at addresses fixed
@@ -124,16 +151,25 @@ the EIP-712 domain separator is computed per call rather than cached. That last
 one is better anyway: a cached separator is wrong on any other chain the code is
 later placed on.
 
-[The tests](contracts/test) perform the attacks rather than describing them:
+[The tests](contracts/test) exist to show the standards behaving, including in
+the places the specification is easy to read past:
 
-- **The approve race** — a spender front-runs an allowance change and takes
-  **150** where the owner never intended more than 100 at any moment.
-- **The ERC-4626 inflation attack** — an attacker seeds an empty vault with one
-  share, donates assets straight to it so that share's price rockets, and the
-  next depositor's stake is divided by the inflated price and rounded down. The
-  victim pays 2000 and redeems 1500. Reproducible live in four `cast send` calls.
-- **Permit replay, expiry and cross-chain reuse**, and why the EIP-712 domain
-  carries a chain id.
+- **What an allowance actually is.** Not a promise about a total — a number the
+  spender may draw down at any moment. Change one from 100 to 50 and a spender
+  who moves between the two transactions draws **150**, because there was never a
+  moment when the token was in an inconsistent state. This is why ERC-20 grew a
+  `zero it first` convention and why `increaseAllowance` exists.
+- **How a vault converts between assets and shares.** ERC-4626 is a ratio, and a
+  ratio in integer arithmetic has to round somewhere. Deposit into an empty vault
+  and into a vault someone has donated to, and watch the same deposit buy
+  different numbers of shares — then watch what rounding down does to the
+  redemption.
+- **What an EIP-712 signature is bound to.** A permit carries a nonce so it
+  cannot be replayed, a deadline so it expires, and a domain that names the chain
+  id — so a signature made here is meaningless anywhere else. Each is tested by
+  trying it.
+- **Infinite allowance, burn semantics, and the two reverts** every ERC-20 has to
+  produce.
 
 ```bash
 cd contracts && forge test

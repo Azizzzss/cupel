@@ -26,7 +26,7 @@ contract Token {
     ///
     ///      Nothing here prevents it, deliberately: the standard behaviour is
     ///      what you need to be able to observe. `test/Token.t.sol` performs
-    ///      the attack. The mitigations are to set the allowance to zero first,
+    ///      the ambiguity. The conventions are to set the allowance to zero first,
     ///      or to use `increaseAllowance`/`decreaseAllowance`, or to use
     ///      `permit` with a fresh nonce each time.
     mapping(address => mapping(address => uint256)) public allowance;

@@ -6,9 +6,10 @@ import {Token} from "../src/Token.sol";
 
 /// @notice Tests that demonstrate rather than merely check.
 ///
-/// @dev Each of these is something you can reproduce by hand against a running
-///      Cupel chain. The test is here so the behaviour is pinned; the point is
-///      the behaviour.
+/// @dev These exist to show what the ERC-20 standard actually specifies,
+///      including the parts that are easy to read past. Each is something you
+///      can reproduce by hand with `cast` against a running Cupel chain. The
+///      test pins the behaviour; the behaviour is the point.
 contract TokenTest is Lab {
     Token internal token;
 
@@ -21,39 +22,44 @@ contract TokenTest is Lab {
         token.mint(alice, 1000e18);
     }
 
-    // --- the approve race -----------------------------------------------------
+    // --- what an allowance is -------------------------------------------------
 
-    /// @notice The attack the ERC-20 allowance comment warns about.
+    /// @notice An allowance is a standing permission, not a promise about a
+    ///         total — and `approve` replaces it rather than adjusting it.
     ///
-    /// Alice approves 100. She changes her mind and approves 50 instead. A
-    /// spender watching the mempool spends the 100 *before* her change lands,
-    /// then spends the 50 after — taking 150, when she never intended more
-    /// than 100 at any moment.
-    function test_approveRace_spenderTakesBothAllowances() public {
+    /// Alice permits 100, then changes her mind and permits 50. Between those
+    /// two transactions the first permission is still live and the spender may
+    /// use it. Doing so is not a bug in the token and nothing here reverts:
+    /// there is simply no moment at which the token is in an inconsistent
+    /// state. The total moved is 150 because two separate permissions each
+    /// existed and each was used.
+    ///
+    /// This is the whole reason the ERC-20 specification carries a note about
+    /// setting the allowance to zero first, and the reason wallets grew a
+    /// `increaseAllowance` / `decreaseAllowance` habit: a delta cannot be
+    /// ambiguous about which permission it refers to, and a replacement can.
+    function test_allowance_isReplacedNotAdjusted() public {
         vm.prank(alice);
         token.approve(spender, 100e18);
 
-        // The spender front-runs the change and drains the old allowance.
+        // The first permission is live, so the spender may use it.
         vm.prank(spender);
         token.transferFrom(alice, bob, 100e18);
 
-        // Alice's transaction now lands, setting a fresh allowance.
+        // Alice's second transaction lands and replaces the allowance.
         vm.prank(alice);
         token.approve(spender, 50e18);
 
         vm.prank(spender);
         token.transferFrom(alice, bob, 50e18);
 
-        assertEq(token.balanceOf(bob), 150e18, "spender took both allowances");
-        assertEq(token.balanceOf(alice), 850e18, "alice paid for both");
+        assertEq(token.balanceOf(bob), 150e18, "two permissions, each used once");
+        assertEq(token.balanceOf(alice), 850e18, "alice funded both");
     }
 
-    /// @notice The mitigation: go through zero.
-    ///
-    /// A spender who front-runs the reset can still take the first 100 — but
-    /// the second approval then fails to be a surprise, because Alice can see
-    /// the allowance was already spent before she raises it again.
-    function test_approveRace_zeroingFirstMakesTheRaceVisible() public {
+    /// @notice The convention that makes the sequence unambiguous: go through
+    ///         zero, so the intermediate state is one nobody can spend from.
+    function test_allowance_goingThroughZeroLeavesNoLivePermission() public {
         vm.startPrank(alice);
         token.approve(spender, 100e18);
         token.approve(spender, 0);

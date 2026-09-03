@@ -1,21 +1,24 @@
 # Cupel — design
 
-A local Ethereum network you bring up with one command: real geth nodes finding
-each other through a bootnode, real signing, real monitoring, and a shelf of
-annotated reference contracts already deployed and waiting to be taken apart.
+A local Ethereum network you bring up with one command, built so that the parts
+are visible: the Engine API handshake that produces every block, three consensus
+clients arriving at the same finalised chain, nodes discovering each other
+through a bootnode, and a shelf of annotated reference contracts already
+deployed. The goal is understanding rather than throughput.
 
 ## The gap
 
 | Neighbour | Built for | Why it isn't this |
 |---|---|---|
-| Anvil · Hardhat Node | Fast unit tests | One node, no consensus, no services around it |
-| Kurtosis | Client teams testing clients | A test harness, not a place to learn contracts |
+| Anvil · Hardhat Node | Fast unit tests | One node, no consensus — the interesting half is missing |
+| Kurtosis | Client teams testing clients | A test harness, not a place to learn from |
 | eth-docker · Sedge | Staking operations | Points at mainnet; nothing to experiment on |
 | Blockscout · Otterscan | Viewing a chain | A component to integrate, not a stack |
 
 Nobody packages a chain as a **laboratory** — somewhere you spin up a real
-network in one command and immediately have an explorer, a faucet, working
-oracle price feeds, and heavily annotated ERC implementations already on chain.
+network in one command and can then look inside it: the calls that make a block,
+the votes that finalise one, an explorer over your own history, working oracle
+price feeds, and heavily annotated ERC implementations already on chain.
 
 ## What geth can and cannot do
 

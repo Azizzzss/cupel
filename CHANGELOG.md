@@ -5,6 +5,19 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Changed
+
+- **Reframed around the machinery rather than its failure modes.** The project
+  is for showing how Ethereum works — the Engine API handshake that produces a
+  block, three clients arriving at the same finalised chain, a network forming
+  from a single bootnode — and the writing now leads with that. The Solidity
+  tests are unchanged in what they run and renamed for what they demonstrate:
+  `test_allowance_isReplacedNotAdjusted` rather than `test_approveRace_…`,
+  `test_shares_anInflatedPriceRoundsTheNextDepositDown` rather than
+  `test_inflationAttack_…`. An allowance being a standing permission and a share
+  price being a ratio with a remainder are facts about the standards; they read
+  better as such.
+
 Phase F: a Chainlink oracle.
 
 ---

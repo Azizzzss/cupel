@@ -49,9 +49,10 @@ threshold is two rather than one, why a check runs before another, what breaks
 if the order changes. Most of the comments in this repository exist because
 something was surprising.
 
-**Tests demonstrate behaviour.** The Solidity tests perform the attacks they are
-about; the Rust tests assert on the specific reason a thing was refused, not
-merely that it was. A test named `it_works` teaches nobody anything.
+**Tests demonstrate behaviour.** The Solidity tests run the mechanism they are
+about and assert on what it produced, so the test reads as an explanation; the
+Rust tests assert on the specific reason a thing was refused, not merely that it
+was. A test named `it_works` teaches nobody anything.
 
 **Prefer a narrow rule to a clever one.** The response cache holds only what is
 provably immutable. The policy engine's default is deliberately tight. Both
