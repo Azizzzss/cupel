@@ -379,7 +379,13 @@ services:
       - --p2p-port=9000
       - --p2p-discovery-bootnodes=${CL_BOOTNODE}
       # Teku found no peers from discovery alone and sat isolated with the right
-      # bootnode record in its configuration. A known address is deterministic.
+      # bootnode record in its configuration, so it is also given node 1's
+      # address directly. That address is QUIC, and it has to be: over TCP Teku
+      # held the connection and received gossip perfectly well, but never
+      # appeared in Lighthouse's gossip mesh — so it knew of no peer subscribed
+      # to the topics it needed and published nothing. Twenty-one validators
+      # attested into the void, and the only symptom was justification that
+      # would not advance.
       - --p2p-static-peers=${CL_STATIC_PEER}
       - --p2p-subscribe-all-subnets-enabled=true
       # Teku's equivalent of --supernode: custody every data column rather than

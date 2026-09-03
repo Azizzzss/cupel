@@ -195,9 +195,29 @@ tag — that discipline is what stops month seven from being "still not demoable
 | **B** | Contract library — ERC-20/Permit, 721, 1155, 4626, UUPS, WETH, Multicall3 | `cupel contracts`, then call any of them | light |
 | **C** | Gateway and observability | kill an upstream, watch failover on the dashboard | light |
 | **D** | Policy signing — a key held behind a rules engine | a transaction refused by policy, and the log proving why | light |
-| **E** | The real network — 3 clients, bootnode, both discovery layers | three clients reaching finality; stop one, the rest continue | heavy |
+| **E** | The real network — 3 clients, bootnode, both discovery layers | three clients reaching finality on one chain | heavy |
 | **F** | Oracle — Chainlink node, LINK, Operator, a job | a contract reads an off-chain price | heavy |
 | **G** | Explorer and faucet | click through your own blocks in a browser | medium |
+
+## What phase E's demo turned out to be
+
+The plan promised "three clients reaching finality; stop one, the rest
+continue." The first half is what shipped. The second half is not true and the
+arithmetic says it cannot be: finality needs *more* than two thirds of the
+stake, and three nodes holding a third each leave exactly two thirds when one
+goes. No split of three nodes survives losing one.
+
+What actually happens is more interesting than the promise. The gateway routes
+around the missing node within seconds, blocks keep being proposed by the
+remaining two, transactions keep landing — and justification stops advancing.
+Bring the node back and it resumes. That is the 2/3 threshold being a threshold,
+on a chain small enough to watch it happen, and it is a better demonstration
+than a network that shrugs.
+
+Discovery came out asymmetric too. The execution layer's bootnode works exactly
+as geth's documentation describes: three nodes told only where the bootnode is,
+each finding the other two. The consensus layer needed a different answer per
+client — see below.
 
 ## What phase E actually cost
 
@@ -215,6 +235,7 @@ reasons that had nothing to do with consensus:
 | Teku, again | `keystore file … already in use` | it writes a `.lock` beside each key and a container that is killed rather than stopped leaves them behind, so every restart after a crash reports a lock rather than the crash |
 | Prysm | refused to start | `--accept-terms-of-use` |
 | Prysm, again | a chain that never justified | dialled a `/tcp/` static peer instead of finding node 1 over QUIC, and the TCP connection half-opened — no error, no missed blocks, no attestations |
+| Teku, a third time | a chain that never justified | connected over TCP and received gossip, but never joined Lighthouse's gossip mesh, so every publish failed. QUIC works |
 
 **"Post-merge genesis is the fiddliest single step"** — right about the
 difficulty, wrong about the remedy. The plan said to lift the configuration from
@@ -254,9 +275,24 @@ network once. Attestations did not, because a client with no peer in a gossip
 mesh publishes into nothing. So the chain ran flawlessly and never justified, and
 the only signal was a number that stayed at zero.
 
-Prysm therefore gets the bootnode record and nothing else, Teku gets both, and
-each keeps the path it can actually use. The general lesson is the uncomfortable
-one: **three clients means three peering stories, and a change that fixes one can
+Teku then needed the address to be a *QUIC* one, and that was a third distinct
+failure wearing the same clothes. Over TCP, Teku dialled node 1, stayed
+connected, and received gossip perfectly well — and never appeared in
+Lighthouse's gossip mesh. A libp2p peer that is not in the mesh for a topic knows
+of nobody subscribed to it, so every publish failed and twenty-one validators
+attested into nothing. Over QUIC it joins the mesh.
+
+So: Prysm gets the bootnode record and no static peer, Teku gets the bootnode
+record and a QUIC address, and each keeps the path it can actually use.
+
+Three failures, one symptom. Every time, blocks propagated flawlessly and no slot
+was missed — a block only has to reach the network once, and one peer is enough
+for that. Attestations need a mesh. The chain therefore looked perfect and simply
+never justified, which is why `cupel network status` shows justification, finality
+and peer count beside the block height: the three numbers that were zero while
+everything else looked right.
+
+**Three clients means three peering stories, and a change that fixes one can
 silently disable another in a way that still looks healthy.**
 
 ## Budget

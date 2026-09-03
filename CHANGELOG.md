@@ -41,12 +41,19 @@ validators and a chain that finalises.
   and every client walks three hundred million empty slots first; regenerated
   unconditionally, a restart would silently replace the chain under the data.
 - **Peering is per-client, and each needs a different answer.** Teku found nobody
-  through discovery and sat isolated, so `up` hands out node 1's libp2p address
+  through discovery and sat isolated, so `up` hands out node 1's address
   alongside its ENR. Giving the same address to Prysm broke Prysm: it dialled the
   `/tcp/` multiaddr instead of finding node 1 over QUIC, and that connection
   half-opened — node 1 listed the peer as connected while Prysm counted none.
-  Blocks still propagated, so nothing looked wrong; attestations did not, so the
-  chain never justified. Prysm gets the bootnode record and nothing else.
+  Prysm now gets the bootnode record and nothing else.
+- **The address handed to Teku is QUIC, and the transport is the whole point.**
+  Over TCP, Teku connected, stayed connected and received gossip perfectly — and
+  never appeared in Lighthouse's gossip mesh, so it knew of no peer subscribed to
+  the topics it needed and published nothing at all. Its twenty-one validators
+  attested into the void. Over QUIC it joins the mesh and its attestations
+  publish. In both cases blocks propagated flawlessly and no slot was missed,
+  because a block only has to reach the network once; the only symptom either
+  time was justification that would not advance.
 - **The subnet is chosen, not fixed.** A hard-coded one collided with an
   unrelated project, and Docker's error for that names no culprit. Ranges Docker
   allocates itself and the range WSL uses for its own interface are both skipped.

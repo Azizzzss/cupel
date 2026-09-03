@@ -59,6 +59,10 @@ const MNEMONIC: &str = "sleep moment list remain like wall lake industry canvas 
 /// Where the beacon API of node one is published.
 const CL1_URL: &str = "http://127.0.0.1:5052";
 
+/// Node 1's QUIC port, as `network.yml` gives it to Lighthouse. Peers are
+/// pointed at this rather than at the TCP port; see `static_peer`.
+const CL_QUIC_PORT: u16 = 9001;
+
 /// Prysm's wallet password, and the file compose tells Prysm to read it from.
 /// `network.yml` must name the same file; a test below checks that it does.
 const PRYSM_WALLET_PASSWORD: &str = "cupel";
@@ -348,9 +352,13 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
     let mut env = parse_env(&std::fs::read_to_string(&path)?);
     if needs_identity(&env) {
         println!("cupel: waiting for node 1's beacon node");
-        let (enr, address) = wait_for_identity().await?;
+        let host = env
+            .get("IP_CL1")
+            .cloned()
+            .context("network.env has no IP_CL1")?;
+        let (enr, peer_id) = wait_for_identity().await?;
         env.insert("CL_BOOTNODE".into(), enr);
-        env.insert("CL_STATIC_PEER".into(), address);
+        env.insert("CL_STATIC_PEER".into(), static_peer(&host, &peer_id));
         std::fs::write(&path, render_env(&env))?;
     }
 
@@ -558,20 +566,12 @@ async fn beacon_state(client: &reqwest::Client, beacon: &str) -> (String, String
 }
 
 /// Poll node one's beacon API for the two things its peers need: an ENR to
-/// discover it by, and a libp2p address to dial it at directly.
+/// discover it by, and a peer id to dial it at directly.
 ///
 /// Nodes two and three cannot start before this. A consensus client finds peers
 /// from an ENR, and node one's ENR does not exist until node one does — the
 /// dependency compose cannot express, and most of the reason there is a control
 /// plane here rather than a third compose file.
-///
-/// Both are handed out, and the static address is not redundant. Discovery is a
-/// protocol for finding strangers on a large network; this network has three
-/// members and knows all of them. Relying on discovery alone left one node
-/// isolated with the correct bootnode record in its configuration, contributing
-/// nothing, while the chain sat one node short of the two thirds it needs to
-/// finalise. Dialling a known address is deterministic, and discovery still runs
-/// alongside it.
 async fn wait_for_identity() -> Result<(String, String)> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -583,27 +583,29 @@ async fn wait_for_identity() -> Result<(String, String)> {
             .await
             && let Ok(value) = response.json::<Value>().await
             && let Some(enr) = value.pointer("/data/enr").and_then(Value::as_str)
-            && let Some(address) = tcp_multiaddr(&value)
+            && let Some(peer_id) = value.pointer("/data/peer_id").and_then(Value::as_str)
         {
-            return Ok((enr.to_string(), address));
+            return Ok((enr.to_string(), peer_id.to_string()));
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     bail!("node 1's beacon node never reported an identity — check `docker logs cupel-cl1`")
 }
 
-/// The TCP libp2p address from a beacon node's identity.
+/// Where a peer should dial node 1: over QUIC, not TCP.
 ///
-/// A node advertises several: TCP, QUIC, sometimes IPv6. Only the TCP one is
-/// accepted by every client's static-peer flag.
-fn tcp_multiaddr(identity: &Value) -> Option<String> {
-    identity
-        .pointer("/data/p2p_addresses")?
-        .as_array()?
-        .iter()
-        .filter_map(Value::as_str)
-        .find(|address| address.contains("/tcp/"))
-        .map(str::to_string)
+/// This is built rather than read from the identity endpoint, which advertises
+/// only the TCP address. Both work at the connection level and the difference
+/// shows up a layer above: over TCP, Teku held a connection, received gossip
+/// perfectly well, and could publish none of its own — it never appeared in
+/// Lighthouse's gossip mesh, so it knew of no peer subscribed to the topics it
+/// needed. Twenty-one validators attested into nothing, and the only symptom
+/// was justification that would not advance. Over QUIC it joins the mesh.
+///
+/// Prysm reaches node 1 through discovery and is given no static peer at all,
+/// for a related reason recorded in `network.yml`.
+fn static_peer(host: &str, peer_id: &str) -> String {
+    format!("/ip4/{host}/udp/{CL_QUIC_PORT}/quic-v1/p2p/{peer_id}")
 }
 
 // -------------------------------------------------------------------- pieces
@@ -878,27 +880,19 @@ mod tests {
     }
 
     #[test]
-    fn the_tcp_address_is_chosen_over_quic_and_ipv6() {
-        let identity = serde_json::json!({"data": {"p2p_addresses": [
-            "/ip4/172.24.0.21/udp/9001/quic-v1/p2p/16Uiu2HAmAb",
-            "/ip6/::1/tcp/9000/p2p/16Uiu2HAmAb",
-            "/ip4/172.24.0.21/tcp/9000/p2p/16Uiu2HAmAb",
-        ]}});
-        // The first /tcp/ wins, and QUIC is skipped: not every client accepts a
-        // QUIC multiaddr as a static peer.
-        assert_eq!(
-            tcp_multiaddr(&identity).as_deref(),
-            Some("/ip6/::1/tcp/9000/p2p/16Uiu2HAmAb")
-        );
-    }
+    fn peers_are_pointed_at_quic_on_the_port_compose_opens() {
+        let address = static_peer("172.24.0.21", "16Uiu2HAmAb");
+        assert_eq!(address, "/ip4/172.24.0.21/udp/9001/quic-v1/p2p/16Uiu2HAmAb");
 
-    #[test]
-    fn an_identity_with_no_tcp_address_yields_nothing() {
-        let identity = serde_json::json!({"data": {"p2p_addresses": [
-            "/ip4/172.24.0.21/udp/9001/quic-v1/p2p/16Uiu2HAmAb"
-        ]}});
-        assert_eq!(tcp_multiaddr(&identity), None);
-        assert_eq!(tcp_multiaddr(&serde_json::json!({})), None);
+        // The port has to be the one Lighthouse was told to listen on, and the
+        // two live in different files.
+        let compose = include_str!("../../../compose/network.yml");
+        assert!(
+            compose.contains(&format!("--quic-port={CL_QUIC_PORT}")),
+            "network.yml does not give node 1 --quic-port={CL_QUIC_PORT}"
+        );
+        // And it must be QUIC: over TCP, Teku never joined the gossip mesh.
+        assert!(address.contains("/quic-v1/"), "{address}");
     }
 
     #[test]

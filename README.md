@@ -230,15 +230,21 @@ the mode: not that a chain runs, but that independent implementations agree
 about what it contains.
 
 **A note on what "it works" looks like.** Getting three clients onto one chain
-took three different peering fixes, and the failures were not loud. Prysm spent
-one round dialling a TCP address instead of finding its peer over QUIC; the
-connection half-opened, so node 1 listed it as connected and Prysm counted no
-peers at all. Blocks still propagated perfectly — no missed slots, every client
-agreeing on every block — because a block only has to reach the network once.
-Attestations did not, because a client in no gossip mesh publishes into nothing.
-The chain ran flawlessly and never justified. The only signal was a number that
-stayed at zero, which is why `cupel network status` puts justification and
-finality next to the block height rather than reporting that the nodes are up.
+took three separate peering fixes, and all three failed the same way: silently.
+
+Teku found nobody through discovery. Prysm, handed a TCP address to fix that,
+dialled it instead of finding its peer over QUIC — and the connection
+half-opened, so node 1 listed Prysm as connected while Prysm counted no peers at
+all. Teku, given the same TCP address, connected properly and received gossip
+perfectly, but never joined the gossip mesh, so every message it tried to publish
+went nowhere.
+
+Every time, blocks propagated flawlessly — no missed slots, every client agreeing
+on every block — because a block only has to reach the network once, and one peer
+is enough for that. Attestations need a mesh. So the chain looked perfect and
+simply never justified, and the only signal was a number that stayed at zero.
+That is why `cupel network status` shows justification, finality and peer count
+beside the block height, rather than reporting that the nodes are up.
 
 `cupel observe` brings up a second dashboard for this mode. The panel that
 matters is **Clients disagreeing** — the gap between the furthest-ahead and
