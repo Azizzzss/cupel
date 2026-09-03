@@ -9,6 +9,56 @@ Phase F: a Chainlink oracle.
 
 ---
 
+## [0.5.1] — Phase E, made reliable
+
+Everything found by running the devnet rather than reading it. `v0.5.0` shipped
+the phase; this is what it took to make three clients agree on one chain
+repeatedly rather than once.
+
+### Fixed
+
+- **Three peering failures, one symptom.** Teku found nobody through discovery,
+  so `up` began handing out node 1's address alongside its ENR. Given that
+  address, Prysm dialled it over TCP instead of finding node 1 over QUIC and the
+  connection half-opened — node 1 listed the peer as connected while Prysm
+  counted none. Given the same address, Teku connected properly and received
+  gossip perfectly, and never joined the gossip mesh, so every message it
+  published went nowhere. Prysm now gets the bootnode record alone; Teku gets a
+  QUIC address. Every time, blocks propagated flawlessly and no slot was missed —
+  a block only has to reach the network once — while attestations, which need a
+  mesh, did not. The chain looked healthy and never justified.
+
+- The workspace version had stayed at `0.1.0` through four tagged releases, so
+  `cupel --version` reported `0.1.0` on every one of them. Bumping it belongs in
+  the same commit as the tag.
+- **`network up` was not idempotent.** It re-read node 1's ENR every time and
+  wrote it back, and an ENR's sequence number moves constantly — so compose saw
+  changed configuration for nodes 2 and 3 and recreated them. Recreating a
+  consensus client drops every peer it had. Running the command twice therefore
+  took the consensus layer apart. The identity is now fetched only when it is
+  not already known, which is correct because node 1 keeps its key, address and
+  ports across restarts and a stale sequence number still bootstraps.
+- **A gateway that failed to bind still announced its address.** `serve` bound
+  the port inside a spawned task, so the error went to a `JoinHandle` nobody
+  read and the banner promised an RPC on 8545 regardless. The address even
+  answered — because what held it was another Cupel, serving a different chain,
+  which is a considerably worse outcome than a connection refused. Both the
+  gateway and the signer now take their port before anything announces it, and
+  say which port and what to stop when they cannot.
+- **The chain runs Electra, not Fulu.** It was generated at the tip because the
+  generator defaults there, and that cost client interop. Fulu splits blob data
+  into a hundred and twenty-eight column subnets; three nodes cannot cover that
+  by stake, so every node had to custody everything and subscribe to roughly two
+  hundred gossip topics. At that size the subscription exchange between clients
+  broke: Teku held a healthy connection to Lighthouse, received gossip
+  perfectly, and believed its peer was subscribed to nothing — so all seventeen
+  blocks it proposed and every attestation from its twenty-one validators were
+  published into the void. The chain still finalised, on the other two nodes'
+  67.19%, which is how close that came to going unnoticed. On Electra, with no
+  supernodes, Teku's failed publishes go from a hundred and forty-seven to zero.
+
+---
+
 ## [0.5.0] — Phase E: the multi-client network
 
 `cupel network up`: nine containers, three consensus clients, sixty-four
@@ -40,20 +90,6 @@ validators and a chain that finalises.
   chain to resume.** Left at the generator's default the chain starts in 1970
   and every client walks three hundred million empty slots first; regenerated
   unconditionally, a restart would silently replace the chain under the data.
-- **Peering is per-client, and each needs a different answer.** Teku found nobody
-  through discovery and sat isolated, so `up` hands out node 1's address
-  alongside its ENR. Giving the same address to Prysm broke Prysm: it dialled the
-  `/tcp/` multiaddr instead of finding node 1 over QUIC, and that connection
-  half-opened — node 1 listed the peer as connected while Prysm counted none.
-  Prysm now gets the bootnode record and nothing else.
-- **The address handed to Teku is QUIC, and the transport is the whole point.**
-  Over TCP, Teku connected, stayed connected and received gossip perfectly — and
-  never appeared in Lighthouse's gossip mesh, so it knew of no peer subscribed to
-  the topics it needed and published nothing at all. Its twenty-one validators
-  attested into the void. Over QUIC it joins the mesh and its attestations
-  publish. In both cases blocks propagated flawlessly and no slot was missed,
-  because a block only has to reach the network once; the only symptom either
-  time was justification that would not advance.
 - **The subnet is chosen, not fixed.** A hard-coded one collided with an
   unrelated project, and Docker's error for that names no culprit. Ranges Docker
   allocates itself and the range WSL uses for its own interface are both skipped.
@@ -65,39 +101,6 @@ validators and a chain that finalises.
 - The three consensus clients agree on `beacon_head_slot` and
   `beacon_finalized_epoch`, and on nothing about peer counts — not the metric
   name and not the semantics. Shown per client rather than reconciled.
-
-### Fixed
-
-- The workspace version had stayed at `0.1.0` through four tagged releases, so
-  `cupel --version` reported `0.1.0` on all of them. It is `0.5.0` now, and
-  bumping it belongs in the same commit as the tag.
-- **`network up` was not idempotent.** It re-read node 1's ENR every time and
-  wrote it back, and an ENR's sequence number moves constantly — so compose saw
-  changed configuration for nodes 2 and 3 and recreated them. Recreating a
-  consensus client drops every peer it had. Running the command twice therefore
-  took the consensus layer apart. The identity is now fetched only when it is
-  not already known, which is correct because node 1 keeps its key, address and
-  ports across restarts and a stale sequence number still bootstraps.
-- **A gateway that failed to bind still announced its address.** `serve` bound
-  the port inside a spawned task, so the error went to a `JoinHandle` nobody
-  read and the banner promised an RPC on 8545 regardless. The address even
-  answered — because what held it was another Cupel, serving a different chain,
-  which is a considerably worse outcome than a connection refused. Both the
-  gateway and the signer now take their port before anything announces it, and
-  say which port and what to stop when they cannot.
-- **The chain runs Electra, not Fulu.** It was generated at the tip because the
-  generator defaults there, and that cost client interop. Fulu splits blob data
-  into a hundred and twenty-eight column subnets; three nodes cannot cover that
-  by stake, so every node had to custody everything and subscribe to roughly two
-  hundred gossip topics. At that size the subscription exchange between clients
-  broke: Teku held a healthy connection to Lighthouse, received gossip
-  perfectly, and believed its peer was subscribed to nothing — so all seventeen
-  blocks it proposed and every attestation from its twenty-one validators were
-  published into the void. The chain still finalised, on the other two nodes'
-  67.19%, which is how close that came to going unnoticed. On Electra, with no
-  supernodes, Teku's failed publishes go from a hundred and forty-seven to zero.
-
----
 
 ## [0.4.0] — Phase D: policy signing
 

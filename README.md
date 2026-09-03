@@ -46,7 +46,7 @@ cargo run -p cupel --release
 ```
 
 ```
-  Cupel v0.5.0
+  Cupel v0.5.1
   ---------------------------------------------------
   RPC          http://127.0.0.1:8545
   Node         http://127.0.0.1:8546 (behind the gateway)
@@ -197,7 +197,7 @@ cupel network up
 ```
 
 ```
-  Cupel network v0.5.0
+  Cupel network v0.5.1
   ---------------------------------------------------
   node1   Lighthouse  rpc http://127.0.0.1:8555  beacon http://127.0.0.1:5052
   node2   Prysm       rpc http://127.0.0.1:8556  beacon http://127.0.0.1:5152
@@ -290,7 +290,8 @@ default the chain begins at the Unix epoch, and every client spends its first
 minutes walking three hundred million empty slots. So genesis is generated at
 start-up — but only when there is no chain to resume. A chain that has already
 run must keep the genesis it started from, and the data volumes are what decide
-which case this is.
+which case this is. `cupel network down` then `cupel network up` therefore comes
+back to the same chain, at the height it left off, with the same finalised root.
 
 **Nodes 2 and 3 cannot start until node 1 exists.** A consensus client finds its
 peers from an ENR, and node 1's ENR does not exist until node 1 is running. So
@@ -398,7 +399,7 @@ hide exactly the kind of difference this mode exists to surface.
 | `cupel observe` | start Prometheus and Grafana against the gateway |
 | `cupel network up` | build and start the three-client devnet |
 | `cupel network status` | ask all three nodes where the chain has got to |
-| `cupel network down` | stop the devnet, keep its chains |
+| `cupel network down` | stop the devnet, keep its chains — `up` resumes it |
 | `cupel network reset` | stop the devnet and delete its chains |
 | `cupel network init` | regenerate genesis and keys without starting anything |
 
@@ -501,7 +502,7 @@ and being able to query the past is worth a great deal in a teaching tool.
 | **B** | Contract library, deployed in genesis | ✅ `v0.2.0` |
 | **C** | RPC gateway and monitoring | ✅ `v0.3.0` |
 | **D** | Policy signing and audit log | ✅ `v0.4.0` |
-| **E** | Multi-client network — three consensus clients, a bootnode, real finality | ✅ `v0.5.0` |
+| **E** | Multi-client network — three consensus clients, a bootnode, real finality | ✅ `v0.5.1` |
 | **F** | Chainlink oracle — a contract reading an off-chain price | next |
 | **G** | Blockscout and a faucet | planned |
 
