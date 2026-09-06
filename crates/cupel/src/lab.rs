@@ -318,12 +318,12 @@ async fn where_a_transaction_waits(root: &std::path::Path) -> Result<()> {
              describes under --miner.gasprice, with no error attached to it.",
         );
     } else {
-        field("Block", &summarise(&receipt["blockNumber"]));
+        field("Block", &both(&receipt["blockNumber"]));
         field(
             "Status",
             &format!("{} (1 is success)", summarise(&receipt["status"])),
         );
-        field("Gas used", &summarise(&receipt["gasUsed"]));
+        field("Gas used", &both(&receipt["gasUsed"]));
     }
 
     closing(&[
@@ -786,6 +786,20 @@ fn dig<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
 }
 
 /// A one-line rendering of a JSON value, short enough for a terminal.
+/// A quantity as both decimal and the hex the node actually returned.
+///
+/// `0x5208` is what comes back on the wire and is worth showing, but on its own
+/// it does not say twenty-one thousand — which is the number a reader knows.
+fn both(value: &Value) -> String {
+    match value.as_str() {
+        Some(hex) => match u64::from_str_radix(hex.trim_start_matches("0x"), 16) {
+            Ok(n) => format!("{n} ({hex})"),
+            Err(_) => hex.to_string(),
+        },
+        None => summarise(value),
+    }
+}
+
 fn summarise(value: &Value) -> String {
     match value {
         Value::String(s) => short(s),
@@ -882,6 +896,19 @@ mod tests {
         let lines = wrap("short 0xabcdefabcdefabcdefabcdef end", 10);
         assert_eq!(lines.len(), 3, "{lines:?}");
         assert_eq!(lines[1], "0xabcdefabcdefabcdefabcdef");
+    }
+
+    #[test]
+    fn quantities_show_both_bases() {
+        assert_eq!(both(&serde_json::json!("0x5208")), "21000 (0x5208)");
+        assert_eq!(both(&serde_json::json!("0x1")), "1 (0x1)");
+        // Not every string field is a quantity, and one that is not must come
+        // back unharmed rather than as a confident wrong number.
+        assert_eq!(both(&serde_json::json!("0xnot-a-number")), "0xnot-a-number");
+        assert_eq!(
+            both(&serde_json::json!(null)),
+            summarise(&serde_json::json!(null))
+        );
     }
 
     #[test]

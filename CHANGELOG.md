@@ -1,9 +1,22 @@
 # Changelog
 
-Every phase of the [roadmap](README.md#roadmap) ships as a tagged release. The
-format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Every phase of the [roadmap](README.md#roadmap) ships as a tagged release, and
+so does substantial work that is not a phase. The minor version tracked the
+phase letter through `0.5.0` — A to E — and stops doing so at `0.6.0`, which is
+the walkthroughs rather than phase F.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
+
+Phase F: a Chainlink oracle.
+
+---
+
+## [0.6.0] — The way in
+
+Five phases built the apparatus. This is the first release aimed at somebody
+using it rather than at the thing working.
 
 ### Added
 

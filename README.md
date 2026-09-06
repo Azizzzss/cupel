@@ -71,7 +71,7 @@ cargo run -p cupel --release
 ```
 
 ```
-  Cupel v0.5.1
+  Cupel v0.6.0
   ---------------------------------------------------
   RPC          http://127.0.0.1:8545
   Node         http://127.0.0.1:8546 (behind the gateway)
@@ -293,7 +293,7 @@ cupel network up
 ```
 
 ```
-  Cupel network v0.5.1
+  Cupel network v0.6.0
   ---------------------------------------------------
   node1   Lighthouse  rpc http://127.0.0.1:8555  beacon http://127.0.0.1:5052
   node2   Prysm       rpc http://127.0.0.1:8556  beacon http://127.0.0.1:5152
