@@ -1,0 +1,522 @@
+{
+  "uid": "cupel-execution",
+  "title": "Cupel — execution",
+  "tags": [
+    "cupel"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Head block",
+      "description": "The highest block any execution node holds. In lab mode there is one node and this is the chain; in network mode three nodes should agree, and Cupel — network is where disagreement shows.",
+      "gridPos": { "h": 5, "w": 5, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(chain_head_block{job=\"cupel-execution\"})",
+          "legendFormat": "head"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Waiting in the pool",
+      "description": "Transactions accepted and executable, waiting for a block. A number that sits still while the head climbs means they are being skipped, not queued — see the refusals panel.",
+      "gridPos": { "h": 5, "w": 5, "x": 5, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(txpool_pending{job=\"cupel-execution\"})",
+          "legendFormat": "pending"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Refused for too small a tip",
+      "description": "Anything above zero means geth is dropping transactions that pay less than --miner.gasprice. This is the one failure in the lab that reports itself nowhere else: no RPC error, no log line, just a transaction that stays pending while empty blocks keep coming.",
+      "gridPos": { "h": 5, "w": 5, "x": 10, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(txpool_underpriced{job=\"cupel-execution\"})",
+          "legendFormat": "underpriced"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Reorgs",
+      "description": "Times the node rewound and rebuilt from a different block. A lab chain with one producer should never reorg; under three consensus clients it can, and that is worth seeing.",
+      "gridPos": { "h": 5, "w": 4, "x": 15, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(chain_reorg_executes{job=\"cupel-execution\"})",
+          "legendFormat": "reorgs"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Chain on disk",
+      "description": "Size of the chaindata store. Both modes run --gcmode archive, so nothing is pruned and this only grows.",
+      "gridPos": { "h": 5, "w": 5, "x": 19, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(eth_db_chaindata_disk_size{job=\"cupel-execution\"})",
+          "legendFormat": "chaindata"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "bytes" },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Head, and what trails it",
+      "description": "Each node's head, with the safe and finalised markers beneath it. In lab mode there is no consensus client, so the producer sets all three itself and they move together — the gap only becomes meaningful once real clients are voting.",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "chain_head_block{job=\"cupel-execution\"}",
+          "legendFormat": "{{node}} head"
+        },
+        {
+          "refId": "B",
+          "expr": "max(chain_head_safe{job=\"cupel-execution\"})",
+          "legendFormat": "safe"
+        },
+        {
+          "refId": "C",
+          "expr": "max(chain_head_finalized{job=\"cupel-execution\"})",
+          "legendFormat": "finalised"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "finalised" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "safe" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Transactions geth refused",
+      "description": "The three ways a transaction is taken and then quietly not mined. 'tip too low' is the one that costs an afternoon: geth accepts it into the pool, returns a hash, and the payload builder skips it for ever because it pays under --miner.gasprice. Nothing logs. This panel is that silence, drawn.",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(txpool_underpriced{job=\"cupel-execution\"}[1m])",
+          "legendFormat": "{{node}} tip too low"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(txpool_invalid{job=\"cupel-execution\"}[1m])",
+          "legendFormat": "{{node}} invalid"
+        },
+        {
+          "refId": "C",
+          "expr": "rate(txpool_queued_nofunds{job=\"cupel-execution\"}[1m])",
+          "legendFormat": "{{node}} no funds"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "custom": { "fillOpacity": 20, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*tip too low" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "The transaction pool",
+      "description": "Pending is executable now; queued is waiting on a nonce gap or funds. Slots is what the pool is holding in total.",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 11 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "txpool_pending{job=\"cupel-execution\"}",
+          "legendFormat": "{{node}} pending"
+        },
+        {
+          "refId": "B",
+          "expr": "txpool_queued{job=\"cupel-execution\"}",
+          "legendFormat": "{{node}} queued"
+        },
+        {
+          "refId": "C",
+          "expr": "txpool_slots{job=\"cupel-execution\"}",
+          "legendFormat": "{{node}} slots"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Engine API latency",
+      "description": "How long geth takes to answer the two calls that make blocks — newPayload to execute one, forkchoiceUpdated to adopt it. In lab mode the caller is Cupel's own producer, so this is the cost of Cupel's work as geth sees it. The method name carries a version that moves with the fork, so it is matched by pattern rather than spelled out. These are resetting timers: a node not called within a scrape window reads zero rather than holding its last value.",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 11 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (node) ({__name__=~\"rpc_duration_engine_newPayload.*_success\", job=\"cupel-execution\", quantile=\"0.95\"})",
+          "legendFormat": "{{node}} newPayload p95"
+        },
+        {
+          "refId": "B",
+          "expr": "max by (node) ({__name__=~\"rpc_duration_engine_forkchoiceUpdated.*_success\", job=\"cupel-execution\", quantile=\"0.95\"})",
+          "legendFormat": "{{node}} forkchoiceUpdated p95"
+        },
+        {
+          "refId": "C",
+          "expr": "max by (node) ({__name__=~\"rpc_duration_engine_getPayload.*_success\", job=\"cupel-execution\", quantile=\"0.95\"})",
+          "legendFormat": "{{node}} getPayload p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ns",
+          "custom": { "fillOpacity": 0, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Engine API calls",
+      "description": "Calls per second into the Engine API. geth exports these as resetting timers — each scrape reports only what happened since the previous one — so this sums the per-scrape counts over a minute instead of taking a rate of them. Using rate() here would read a reset as a counter rollover and draw nonsense.",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 17 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (node) (sum_over_time({__name__=~\"rpc_duration_engine_newPayload.*_success_count\", job=\"cupel-execution\"}[1m])) / 60",
+          "legendFormat": "{{node}} newPayload"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (node) (sum_over_time({__name__=~\"rpc_duration_engine_forkchoiceUpdated.*_success_count\", job=\"cupel-execution\"}[1m])) / 60",
+          "legendFormat": "{{node}} forkchoiceUpdated"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (node) (sum_over_time({__name__=~\"rpc_duration_engine_getPayload.*_success_count\", job=\"cupel-execution\"}[1m])) / 60",
+          "legendFormat": "{{node}} getPayload"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "JSON-RPC",
+      "description": "Requests geth answered on its own HTTP and WebSocket ports. In lab mode most client traffic arrives through the gateway instead, so compare this with Cupel — gateway to see what is reaching the node directly.",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 17 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(rpc_requests{job=\"cupel-execution\"}[1m])",
+          "legendFormat": "{{node}} requests"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(rpc_failure{job=\"cupel-execution\"}[1m])",
+          "legendFormat": "{{node}} failures"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*failures" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "State cache hit ratio",
+      "description": "Trie nodes served from memory rather than read off disk. Both modes run --state.scheme hash, so the live cache is hashdb; the pathdb counters exist in the scrape but stay flat at zero, which is what a dashboard copied from a modern mainnet node would plot by mistake.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 23 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashdb_memcache_clean_hit{job=\"cupel-execution\"} / clamp_min(hashdb_memcache_clean_hit{job=\"cupel-execution\"} + hashdb_memcache_clean_miss{job=\"cupel-execution\"}, 1)",
+          "legendFormat": "{{node}} clean"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Peers",
+      "description": "devp2p connections between execution nodes. Empty in lab mode on purpose — that node runs --maxpeers 0 --nodiscover, because a one-node chain has nobody to talk to. Under cupel network up these should settle at two each.",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 23 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "p2p_peers{job=\"cupel-execution\"}",
+          "legendFormat": "{{node}} total"
+        },
+        {
+          "refId": "B",
+          "expr": "p2p_peers_inbound{job=\"cupel-execution\"}",
+          "legendFormat": "{{node}} inbound"
+        },
+        {
+          "refId": "C",
+          "expr": "p2p_peers_outbound{job=\"cupel-execution\"}",
+          "legendFormat": "{{node}} outbound"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Bytes on the wire",
+      "description": "Traffic across the execution peer network. Post-merge this carries transactions between nodes; blocks travel on the consensus network instead, which is why this stays quiet even while the chain advances.",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 23 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(p2p_ingress{job=\"cupel-execution\"}[1m])",
+          "legendFormat": "{{node}} in"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(p2p_egress{job=\"cupel-execution\"}[1m])",
+          "legendFormat": "{{node}} out"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Memory in use",
+      "description": "Go heap actually held by the process.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 29 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "system_memory_used{job=\"cupel-execution\"}",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Goroutines",
+      "description": "A count that climbs and never comes back down is the shape of a leak.",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 29 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "system_cpu_goroutines{job=\"cupel-execution\"}",
+          "legendFormat": "{{node}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Disk throughput",
+      "description": "Reads and writes underneath the database, including compaction. A lab chain should be nearly idle here; sustained writes with no transactions usually means compaction catching up.",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 29 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(system_disk_readbytes{job=\"cupel-execution\"}[1m])",
+          "legendFormat": "{{node}} read"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(system_disk_writebytes{job=\"cupel-execution\"}[1m])",
+          "legendFormat": "{{node}} write"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

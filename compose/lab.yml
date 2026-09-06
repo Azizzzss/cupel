@@ -63,6 +63,9 @@ services:
           --syncmode full \
           --gcmode archive \
           --state.scheme hash \
+          --metrics \
+          --metrics.addr 0.0.0.0 \
+          --metrics.port 6060 \
           --verbosity 2
 
     ports:
@@ -74,6 +77,17 @@ services:
       # Engine API. Bound to localhost only: anything that can reach this port
       # with the JWT can make blocks.
       - "127.0.0.1:8551:8551"
+      # Metrics. On 6060 rather than 6061, which the first network-mode node
+      # holds: the two modes are alternatives, but nothing stops both being up
+      # at once and a port clash here would surface as an opaque Docker bind
+      # error rather than anything about Cupel. Prometheus scrapes it as a
+      # fourth execution target labelled `lab`, so the execution dashboard works
+      # in either mode without knowing which one it is looking at.
+      #
+      # Worth having in this mode in particular: this is where a transaction
+      # paying under --miner.gasprice sits pending for ever, and
+      # txpool_underpriced is the only place that says so.
+      - "127.0.0.1:6060:6060"
 
     volumes:
       - ../config/genesis:/config:ro

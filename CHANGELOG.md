@@ -5,6 +5,45 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- **A third dashboard, *Cupel — execution*.** Prometheus had been scraping geth
+  since phase C and almost nothing read the result: two metrics out of the 899
+  the node exposes. This is the node's own view — head with the safe and
+  finalised markers trailing it, the transaction pool, Engine API latency and
+  call rate, JSON-RPC, peers, state cache, disk — in both modes, told apart by a
+  `node` label rather than by a separate dashboard.
+
+  The panel that earns it is **Transactions geth refused**. A transaction paying
+  under `--miner.gasprice` is accepted into the pool, returns a hash, and is then
+  skipped by the payload builder for ever; nothing errors and nothing logs, so
+  the only symptom is a transaction pending while empty blocks keep coming.
+  `txpool_underpriced` is where that says so, and now it is on a screen.
+
+- **Metrics in lab mode.** `compose/lab.yml` had no `--metrics` flags at all, so
+  the default one-command mode exposed nothing and the `cupel-execution` scrape
+  job existed only for the devnet. geth now serves metrics on `6060` there,
+  scraped as a fourth target in the same job, labelled `lab`. Port `6060` rather
+  than `6061` because the first devnet node holds `6061`, and the README promises
+  both modes can run at once — a clash would have surfaced as a Docker bind
+  error saying nothing about Cupel.
+
+- **CI checks every dashboard panel against a live Prometheus.**
+  [`check-dashboards.sh`](.github/scripts/check-dashboards.sh) pulls every
+  `expr` out of every dashboard, asks a real Prometheus scraping a real chain,
+  and fails on any that returns no series. Both the lab and network jobs run it,
+  in their own mode, with an explicit skip-list for panels whose emptiness is a
+  property of the mode rather than a fault.
+
+  This exists because a dashboard cannot fail loudly. Rename a metric upstream
+  and the panel does not error — it draws an empty box, which on a lab chain
+  looks exactly like a quiet one. Both well-known community geth dashboards died
+  this way and still render: the EF devops fork is InfluxDB-only and last revised
+  in 2021, so `chain_execution`, `chain_validation`, `chain_write` and
+  `trie_memcache_*` are all gone from geth 1.17; the other needs a JSON-RPC
+  exporter last touched in 2019, before the merge. Neither was imported, and this
+  check is what stops the same rot starting here.
+
 ### Changed
 
 - **Reframed around the machinery rather than its failure modes.** The project

@@ -113,15 +113,34 @@ jobs:
 
           echo "integration checks passed"
 
+      - name: Every dashboard panel resolves
+        # A dashboard cannot fail loudly: rename a metric and the panel does not
+        # error, it draws an empty box that looks like a quiet chain. So the
+        # queries are asked of a real Prometheus scraping a real node, which is
+        # the only way this stays true as geth moves.
+        run: |
+          ./target/debug/cupel observe
+          # Two scrape intervals, so rate() and sum_over_time() have a window.
+          for _ in $(seq 1 30); do
+            curl -sf 'http://127.0.0.1:9090/api/v1/query?query=up{job="cupel-execution"}' \
+              | grep -q '"value"' && break
+            sleep 1
+          done
+          sleep 10
+          .github/scripts/check-dashboards.sh http://127.0.0.1:9090 lab
+
       - name: Logs on failure
         if: failure()
         run: |
           cat cupel.log || true
           docker logs cupel-geth 2>&1 | tail -50 || true
+          curl -s http://127.0.0.1:9090/api/v1/targets | head -c 2000 || true
 
       - name: Tear down
         if: always()
-        run: ./target/debug/cupel down || true
+        run: |
+          ./target/debug/cupel observe --down || true
+          ./target/debug/cupel down || true
   network:
     name: network
     # Nine containers, four images to pull and several minutes to the first
@@ -212,6 +231,20 @@ jobs:
           test "$(cast call 0x00000000000000000000000000000000c0de0020 'balanceOf(address)(uint256)' $ME --rpc-url $RPC)" \
             = "1000000000000000000000 [1e21]"
 
+      - name: Every dashboard panel resolves
+        # Same check as the lab job, against the mode that has consensus clients:
+        # between the two, every panel on every dashboard is proven to resolve in
+        # at least one mode, and the skip-lists say which mode that is.
+        run: |
+          ./target/debug/cupel observe
+          for _ in $(seq 1 30); do
+            curl -sf 'http://127.0.0.1:9090/api/v1/query?query=up{job="cupel-consensus"}' \
+              | grep -q '"value"' && break
+            sleep 1
+          done
+          sleep 10
+          .github/scripts/check-dashboards.sh http://127.0.0.1:9090 network
+
       - name: Logs on failure
         if: failure()
         run: |
@@ -219,7 +252,10 @@ jobs:
             echo "===== cupel-$c ====="
             docker logs "cupel-$c" 2>&1 | tail -40 || true
           done
+          curl -s http://127.0.0.1:9090/api/v1/targets | head -c 2000 || true
 
       - name: Tear down
         if: always()
-        run: ./target/debug/cupel network reset || true
+        run: |
+          ./target/debug/cupel observe --down || true
+          ./target/debug/cupel network reset || true

@@ -1,10 +1,16 @@
-# In lab mode the gateway is the only thing worth scraping: what matters is what
-# clients experienced, not what the node thinks of itself.
+# Two things are worth scraping in lab mode. The gateway says what clients
+# actually experienced, which is not the same as what the node thinks of itself;
+# the node says why — a transaction the gateway saw accepted can still be sitting
+# in the pool because it pays under the miner's floor, and only geth's own
+# counters admit it.
 #
-# In network mode the node's own view is the point. Three execution clients and
+# In network mode the node's view is the whole point. Three execution clients and
 # three different consensus clients should agree about the head, and a scrape of
-# each one is how that is checked rather than asserted. Those targets are down
-# in lab mode and Prometheus reports them as such, which is the honest answer.
+# each one is how that is checked rather than asserted.
+#
+# Every target for a mode that is not running reports down, and Prometheus says
+# so rather than hiding it. That is the honest answer, and the dashboards are
+# written to expect it.
 global:
   scrape_interval: 5s
   evaluation_interval: 5s
@@ -23,6 +29,10 @@ scrape_configs:
     # target that answers, scrapes clean, and yields nothing.
     metrics_path: /debug/metrics/prometheus
     static_configs:
+      # Lab mode's single node, in the same job as the devnet's three so one
+      # dashboard serves both modes and only the label says which is which.
+      - targets: ["host.docker.internal:6060"]
+        labels: { node: lab, client: geth }
       - targets: ["host.docker.internal:6061"]
         labels: { node: node1, client: geth }
       - targets: ["host.docker.internal:6062"]

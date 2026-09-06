@@ -208,7 +208,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "chain_head_block",
+          "expr": "chain_head_block{node=~\"node.*\"}",
           "legendFormat": "{{node}}"
         }
       ],
@@ -286,7 +286,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "p2p_peers",
+          "expr": "p2p_peers{node=~\"node.*\"}",
           "legendFormat": "{{node}}"
         }
       ],
