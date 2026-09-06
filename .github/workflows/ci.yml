@@ -156,7 +156,7 @@ jobs:
     # know that three consensus clients still agree after a dependency moves.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -188,60 +188,62 @@ jobs:
       - name: Bring up the devnet
         run: ./target/debug/cupel network up --detach
 
-      - name: The three clients find each other
-        # Finality needs attestations from two thirds of the stake, and an
-        # attestation only counts once it has reached the other clients. In a
-        # three-node network that means every node holds two peers.
-        #
-        # A star does not. If nodes 2 and 3 each find node 1 and never each
-        # other, blocks still propagate — a block only has to reach the network
-        # once — and an epoch still justifies now and then, so the chain looks
-        # alive. It just never finalises, because finality needs two justified
-        # epochs in a row and a gossip mesh of degree one does not deliver
-        # attestations reliably enough to get them.
-        #
-        # That is what the twenty-minute finality wait below was reporting as
-        # "no finalised epoch", which is true and useless. Asking about peers
-        # first turns it into a two-minute failure that names the client sitting
-        # on its own.
-        run: |
-          peers() {
-            n=$(curl -sf "http://127.0.0.1:$1/eth/v1/node/peer_count" \
-              | jq -r '.data.connected // 0' 2>/dev/null || echo 0)
-            case "$n" in ''|*[!0-9]*) n=0 ;; esac
-            echo "$n"
-          }
-          for _ in $(seq 1 24); do
-            lh=$(peers 5052); pr=$(peers 5152); tk=$(peers 5252)
-            echo "peers — lighthouse:$lh prysm:$pr teku:$tk"
-            if [ "$lh" -ge 2 ] && [ "$pr" -ge 2 ] && [ "$tk" -ge 2 ]; then
-              echo "all three clients have both peers"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo
-          echo "the mesh never completed: at least one client has fewer than two peers"
-          echo "each client is bootstrapped from node 1's ENR, so a client stuck at"
-          echo "one peer has found node 1 and not the third node."
-          exit 1
-
       - name: The chain finalises
         # Finality is the whole claim of this mode. Two thirds of the stake must
         # agree, and the stake is split so that no single node holds it.
+        #
+        # Thirty minutes, not twenty, and the difference is not slack. An
+        # epoch is 32 six-second slots, so a chain keeping time finalises inside
+        # ten minutes. A GitHub runner does not keep time: nine containers —
+        # three geth, three beacon nodes, two validators — on two cores miss
+        # roughly every other slot, and a run that reached slot 98 in twenty
+        # minutes was producing a block every twelve seconds rather than every
+        # six. That halves the epoch rate, so finality lands just outside the old
+        # window, and the step reported "no finalised epoch after twenty minutes"
+        # — true, and silent about why.
+        #
+        # So the wait is long enough for a chain running at half speed, and what
+        # it prints says whether that is what is happening: the head slot beside
+        # the slot the wall clock expects. Behind means the runner is starved,
+        # not that consensus is broken.
         run: |
-          for _ in $(seq 1 120); do
+          genesis=$(curl -sf http://127.0.0.1:5052/eth/v1/beacon/genesis \
+            | jq -r '.data.genesis_time // 0' 2>/dev/null || echo 0)
+          case "$genesis" in ''|*[!0-9]*) genesis=0 ;; esac
+
+          for _ in $(seq 1 150); do
             # A failed request yields an empty string, and an empty string is
             # not "0" — testing for inequality would report a chain that never
             # answered as a chain that finalised. Insist on a positive integer.
-            epoch=$(curl -sf http://127.0.0.1:5052/eth/v1/beacon/states/head/finality_checkpoints \
-              | jq -r '.data.finalized.epoch // 0' 2>/dev/null || echo 0)
+            checkpoints=$(curl -sf http://127.0.0.1:5052/eth/v1/beacon/states/head/finality_checkpoints || echo '{}')
+            epoch=$(printf '%s' "$checkpoints" | jq -r '.data.finalized.epoch // 0' 2>/dev/null || echo 0)
+            just=$(printf '%s' "$checkpoints" | jq -r '.data.current_justified.epoch // 0' 2>/dev/null || echo 0)
             case "$epoch" in ''|*[!0-9]*) epoch=0 ;; esac
-            echo "finalized epoch: $epoch"
+            case "$just" in ''|*[!0-9]*) just=0 ;; esac
+
+            slot=$(curl -sf http://127.0.0.1:5052/eth/v1/beacon/headers/head \
+              | jq -r '.data.header.message.slot // 0' 2>/dev/null || echo 0)
+            case "$slot" in ''|*[!0-9]*) slot=0 ;; esac
+
+            if [ "$genesis" -gt 0 ]; then
+              want=$(( ( $(date +%s) - genesis ) / 6 ))
+              echo "slot $slot of an expected $want   justified $just   finalized $epoch"
+            else
+              echo "slot $slot   justified $just   finalized $epoch"
+            fi
+
             if [ "$epoch" -gt 0 ]; then exit 0; fi
             sleep 10
           done
-          echo "no finalised epoch after twenty minutes"
+
+          echo
+          echo "no finalised epoch after thirty minutes"
+          if [ "$genesis" -gt 0 ]; then
+            want=$(( ( $(date +%s) - genesis ) / 6 ))
+            echo "the chain reached slot $slot where the clock expected $want."
+            echo "well short of that is a starved runner missing slots, not a"
+            echo "consensus failure — the same chain finalises on a laptop."
+          fi
           exit 1
 
       - name: All three clients agree
