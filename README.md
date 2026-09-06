@@ -104,6 +104,59 @@ MetaMask connects at chain id **31337**; import any key above.
 
 ---
 
+## Walkthroughs
+
+The parts above are the apparatus. These are the way in — numbered lessons that
+do real work against a running chain and narrate it as they go.
+
+```bash
+cupel lab        # what there is
+cupel lab 1      # run the first one
+```
+
+| | | needs |
+|---|---|---|
+| **1** | How a block is made | `cupel up` |
+| **2** | Where a transaction waits | `cupel up` |
+| **3** | Slots, epochs and finality | `cupel network up` |
+| **4** | Three clients, one chain | `cupel network up` |
+
+Nothing is simulated and nothing is pre-recorded. Walkthrough 1 produces a real
+block on your chain and prints the four calls that did it, with the real payload
+id and the real timings:
+
+```
+  -- 1. Ask for a block --
+
+  `engine_forkchoiceUpdatedV3` does two jobs at once. It states which block is
+  the head, and — when payload attributes are attached — asks the client to
+  start building the next one. The client answers with a payload id, which is a
+  receipt for work it has started, not a block.
+
+      Method                 engine_forkchoiceUpdatedV3
+      Sent                   [{finalizedBlockHash, headBlockHash, safeBlockHash},
+                              {parentBeaconBlockRoot, prevRandao,
+                               suggestedFeeRecipient, timestamp, withdrawals}]
+      Answered in            2.1ms
+        payloadStatus.status VALID
+        payloadId            0x03a35bad9e60fdc1
+```
+
+That is the same producer `cupel up` runs, asked to keep a copy of what it sent.
+There is one implementation of how a block gets made and it narrates itself,
+rather than a second copy of the sequence living next to a lesson about it and
+quietly drifting.
+
+The consequence is that a walkthrough run against a chain that is not up
+**fails**, rather than printing a plausible transcript. That is the point: you
+are watching the machine, not a description of it.
+
+The prose lives in [`crates/cupel/src/lab.rs`](crates/cupel/src/lab.rs), beside
+the code that produces the output — a lesson kept in a separate document drifts
+from what it describes and nothing catches it.
+
+---
+
 ## What's in the box
 
 | | | Written here |
@@ -463,6 +516,8 @@ hide exactly the kind of difference this mode exists to surface.
 | `cupel down` | stop the chain, keep its data |
 | `cupel reset` | stop the chain and delete its data |
 | `cupel status` | is it up, and where has it got to |
+| `cupel lab` | list the walkthroughs |
+| `cupel lab 1` | run one — real work against a running chain, narrated |
 | `cupel contracts` | list the reference contracts and their addresses |
 | `cupel genesis` | rewrite the genesis allocation from the compiled contracts |
 | `cupel observe` | start Prometheus and Grafana against the gateway and the nodes |
