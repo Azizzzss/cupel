@@ -299,7 +299,7 @@ never justified, and the only signal was a number that stayed at zero. That is
 why `cupel network status` shows justification, finality and peer count beside
 the block height, rather than reporting that the nodes are up.
 
-`cupel observe` brings up a second dashboard for this mode. The panel that
+`cupel observe` brings up a dashboard for this mode. The panel that
 matters is **Clients disagreeing** — the gap between the furthest-ahead and
 furthest-behind client, which should read zero for ever. Beside it, three head
 slot lines drawn exactly on top of one another.
@@ -398,16 +398,37 @@ cupel observe          # Prometheus and Grafana, provisioned, no login
 cupel observe --down
 ```
 
-Grafana on `:3000` comes up with two dashboards already wired.
+Grafana on `:3000` comes up with three dashboards already wired.
 
 **Cupel — gateway** is about lab mode: upstreams answering, request rate split
 ok/failed/rejected, cache hit ratio, health over time, traffic by method.
 Metrics come from the gateway rather than from geth, deliberately — what matters
 in a lab is what clients experienced, not what the node thinks of itself.
 
+**Cupel — execution** is the other half of that sentence: what the node thinks
+of itself, in either mode. Head with the safe and finalised markers trailing it,
+the transaction pool, Engine API latency and call rate, JSON-RPC, peers, state
+cache, disk. The panel worth knowing about is **Transactions geth refused**,
+because it is the only place the lab's most expensive silence is written down: a
+transaction paying less than `--miner.gasprice` is accepted into the pool,
+returns a hash, and is then skipped by the payload builder for ever. No error,
+no log line — just a transaction pending while empty blocks keep coming, and
+`txpool_underpriced` climbing.
+
 **Cupel — network** is about the devnet, where the node's own view *is* the
 point: finalised epoch, head slot per consensus client, justification, peers on
 both layers, and the gap between the furthest-ahead and furthest-behind client.
+
+These are written here rather than imported, for a reason worth stating. Both
+well-known community geth dashboards fail against this stack: the one forked
+from EF devops is InfluxDB-only and was last revised in 2021, so its central
+panels — `chain_execution`, `chain_validation`, `chain_write`, `trie_memcache_*`
+— plot metrics geth 1.17 no longer emits; the other needs a JSON-RPC exporter
+last touched in 2019, before the merge. Neither would report an error. Both
+would simply draw empty boxes, which on a lab chain is indistinguishable from a
+quiet one. That is why CI asks a live Prometheus for every panel's query and
+fails on any that returns no series
+([`check-dashboards.sh`](.github/scripts/check-dashboards.sh)).
 
 Two details that cost time. geth does not serve Prometheus at `/metrics` — it
 serves expvar there and the text format at `/debug/metrics/prometheus`, so the
@@ -432,7 +453,7 @@ hide exactly the kind of difference this mode exists to surface.
 | `cupel status` | is it up, and where has it got to |
 | `cupel contracts` | list the reference contracts and their addresses |
 | `cupel genesis` | rewrite the genesis allocation from the compiled contracts |
-| `cupel observe` | start Prometheus and Grafana against the gateway |
+| `cupel observe` | start Prometheus and Grafana against the gateway and the nodes |
 | `cupel network up` | build and start the three-client devnet |
 | `cupel network status` | ask all three nodes where the chain has got to |
 | `cupel network down` | stop the devnet, keep its chains — `up` resumes it |
@@ -447,6 +468,7 @@ hide exactly the kind of difference this mode exists to surface.
 | `8546` | geth's own JSON-RPC, behind it |
 | `8550` | the policy signer |
 | `8551` | Engine API, JWT authenticated, localhost only |
+| `6060` | geth's metrics, for Prometheus |
 | `3000` / `9090` | Grafana / Prometheus, when `cupel observe` is running |
 
 Network mode uses its own ports, so both modes can run at once:

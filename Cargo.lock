@@ -1553,6 +1553,7 @@ dependencies = [
 name = "cupel"
 version = "0.5.1"
 dependencies = [
+ "alloy",
  "anyhow",
  "clap",
  "cupel-gateway",

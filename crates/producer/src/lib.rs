@@ -32,7 +32,7 @@
 //! The Engine API is authenticated with a shared secret rather than left open,
 //! because anything that can reach it can dictate what the chain contains.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header as JwtHeader};
 use rand::Rng;
@@ -101,6 +101,26 @@ pub struct Produced {
     pub transactions: usize,
     /// Gas consumed.
     pub gas_used: u64,
+    /// The Engine API calls that produced it, in order.
+    ///
+    /// Empty unless [`Config::record_exchanges`] is set. It exists so the
+    /// sequence can be shown to somebody rather than described to them: there
+    /// is one implementation of how a block gets made, and it can narrate
+    /// itself instead of being reimplemented next to a lesson about it.
+    pub exchanges: Vec<Exchange>,
+}
+
+/// One request to the Engine API and what came back.
+#[derive(Debug, Clone)]
+pub struct Exchange {
+    /// The method called, such as `engine_getPayloadV3`.
+    pub method: String,
+    /// The parameters sent, exactly as they went on the wire.
+    pub request: Value,
+    /// The `result` field of the response, or null if the call failed.
+    pub response: Value,
+    /// How long the client took to answer.
+    pub elapsed: Duration,
 }
 
 /// How the producer should behave.
@@ -116,6 +136,11 @@ pub struct Config {
     pub fee_recipient: String,
     /// Interval between blocks.
     pub block_time: Duration,
+    /// Whether to keep a copy of every Engine API exchange in [`Produced`].
+    ///
+    /// Off by default. Producing a block is the hot path and a payload can be
+    /// large, so the copies are only made when something intends to read them.
+    pub record_exchanges: bool,
     /// How long to let the client build a payload before collecting it.
     ///
     /// This has to exceed the client's payload refresh interval, not merely be
@@ -135,6 +160,7 @@ impl Default for Config {
             jwt_secret: [0u8; 32],
             fee_recipient: "0x0000000000000000000000000000000000000000".to_string(),
             block_time: Duration::from_secs(1),
+            record_exchanges: false,
             build_delay: Duration::from_millis(500),
         }
     }
@@ -196,11 +222,14 @@ impl Producer {
             "parentBeaconBlockRoot": ZERO_HASH,
         });
 
+        let mut exchanges = Vec::new();
+
         // 1. Ask the client to start building.
         let started = self
             .engine_call(
                 "engine_forkchoiceUpdatedV3",
                 json!([forkchoice(&head.hash), attributes]),
+                &mut exchanges,
             )
             .await?;
         check_payload_status(&started["payloadStatus"], "engine_forkchoiceUpdatedV3")?;
@@ -215,7 +244,7 @@ impl Producer {
         // 2. Give it a moment to pull transactions in, then collect the block.
         tokio::time::sleep(self.config.build_delay).await;
         let built = self
-            .engine_call("engine_getPayloadV3", json!([payload_id]))
+            .engine_call("engine_getPayloadV3", json!([payload_id]), &mut exchanges)
             .await?;
         let payload = &built["executionPayload"];
 
@@ -225,6 +254,7 @@ impl Producer {
             .engine_call(
                 "engine_newPayloadV3",
                 json!([payload, Vec::<String>::new(), ZERO_HASH]),
+                &mut exchanges,
             )
             .await?;
         check_payload_status(&accepted, "engine_newPayloadV3")?;
@@ -237,6 +267,7 @@ impl Producer {
             .engine_call(
                 "engine_forkchoiceUpdatedV3",
                 json!([forkchoice(&new_head.hash), Value::Null]),
+                &mut exchanges,
             )
             .await?;
         check_payload_status(&adopted["payloadStatus"], "engine_forkchoiceUpdatedV3")?;
@@ -245,6 +276,7 @@ impl Producer {
             transactions: payload["transactions"].as_array().map_or(0, Vec::len),
             gas_used: parse_hex_u64(&payload["gasUsed"]).unwrap_or(0),
             head: new_head,
+            exchanges,
         })
     }
 
@@ -269,8 +301,29 @@ impl Producer {
         )?)
     }
 
-    async fn engine_call(&self, method: &str, params: Value) -> Result<Value, ProducerError> {
-        self.rpc_call(method, params, true).await
+    async fn engine_call(
+        &self,
+        method: &str,
+        params: Value,
+        log: &mut Vec<Exchange>,
+    ) -> Result<Value, ProducerError> {
+        if !self.config.record_exchanges {
+            return self.rpc_call(method, params, true).await;
+        }
+        // Only cloned when somebody is going to read it; a payload with a
+        // thousand transactions in it is not worth copying for nobody.
+        let request = params.clone();
+        let started = Instant::now();
+        let result = self.rpc_call(method, params, true).await;
+        log.push(Exchange {
+            method: method.to_string(),
+            request,
+            // A failed call still gets an entry, with a null response — the
+            // error itself is returned to the caller and is not clonable.
+            response: result.as_ref().ok().cloned().unwrap_or(Value::Null),
+            elapsed: started.elapsed(),
+        });
+        result
     }
 
     async fn rpc_call(

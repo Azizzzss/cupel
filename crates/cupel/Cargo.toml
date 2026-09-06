@@ -19,6 +19,7 @@ workspace = true
 cupel-gateway = { path = "../gateway" }
 cupel-producer = { path = "../producer" }
 cupel-signer = { path = "../signer" }
+alloy = { version = "2.1.1", features = ["signer-local", "consensus", "eips"] }
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
 reqwest.workspace = true

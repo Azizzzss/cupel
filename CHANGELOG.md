@@ -7,6 +7,25 @@ format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Guided walkthroughs — `cupel lab`.** Numbered lessons that do real work
+  against a running chain and narrate it: the four Engine API calls that make a
+  block, printed request and response; the three states a transaction passes
+  through and which question distinguishes them; slots, epochs and what has to
+  happen twice before a block is final; and the same question asked of three
+  clients at once. Nothing is simulated and nothing is pre-recorded — with no
+  chain up, a walkthrough fails, which is the honest outcome.
+
+  The prose lives in `crates/cupel/src/lab.rs` beside the code that produces the
+  output, because a lesson kept in a separate document drifts from the thing it
+  describes and there is no way to notice.
+
+- **The producer can narrate itself.** `Config::record_exchanges` makes
+  `produce_block` keep a copy of each Engine API call in `Produced::exchanges`,
+  so walkthrough 1 shows the real sequence rather than a reimplementation of it
+  standing next to a lesson about it. Off by default: producing a block is the
+  hot path and a payload can be large, so the copies are made only when
+  something intends to read them.
+
 - **A third dashboard, *Cupel — execution*.** Prometheus had been scraping geth
   since phase C and almost nothing read the result: two metrics out of the 899
   the node exposes. This is the node's own view — head with the safe and

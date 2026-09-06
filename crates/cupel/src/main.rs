@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod contracts;
+mod lab;
 mod network;
 
 use anyhow::{Context, Result, bail};
@@ -95,11 +96,19 @@ enum Commands {
     Status,
     /// List the reference contracts and the addresses they live at.
     Contracts,
-    /// Start Prometheus and Grafana against the gateway's metrics.
+    /// Start Prometheus and Grafana against the gateway, the nodes, and the clients.
     Observe {
         /// Stop them instead.
         #[arg(long)]
         down: bool,
+    },
+    /// Walk through a piece of the machinery, narrated while it runs.
+    ///
+    /// With no number, lists what there is. Each walkthrough does real work
+    /// against a running chain and prints what it sent and what came back.
+    Lab {
+        /// Which one to run.
+        number: Option<u8>,
     },
     /// Run the multi-client devnet instead of the single-node lab.
     ///
@@ -158,6 +167,13 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Observe { down } => observe(&root, down).await,
+        Commands::Lab { number } => match number {
+            Some(number) => lab::run(&root, number).await,
+            None => {
+                lab::list();
+                Ok(())
+            }
+        },
         Commands::Network { command } => match command {
             NetworkCommand::Up { detach } => network::up(&root, detach).await,
             NetworkCommand::Init => network::init(&root).await,
@@ -363,7 +379,7 @@ async fn observe(root: &Path, down: bool) -> Result<()> {
     println!("  Metrics      {GATEWAY_URL}/metrics");
     println!("  Signer       {SIGNER_URL}  (policy at /policy, decisions at /audit)");
     println!();
-    println!("  The dashboard is provisioned; no login needed.");
+    println!("  Dashboards   gateway, execution, network — provisioned, no login needed.");
     println!();
     Ok(())
 }
