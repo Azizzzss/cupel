@@ -226,7 +226,14 @@ issuing them is the usual way a local node becomes unresponsive.
 
 Lab mode is one node told what to do by a producer on the host. That is the
 right trade when you want a chain *now*, and the wrong one when the question is
-about the network itself. `cupel network up` builds the other thing:
+about the network itself. The difference is where blocks come from:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/two-modes-dark.svg">
+  <img alt="Lab mode: clients reach a gateway on 8545 which forwards to one geth node, driven by a block producer on the host over the Engine API — no consensus, no peers, no finality. Network mode: the same gateway fronts three geth nodes, each paired over the Engine API with a different consensus client; those clients gossip blocks and attestations between themselves, and a bootnode gives the execution nodes discovery." src="docs/img/two-modes-light.svg" width="100%">
+</picture>
+
+`cupel network up` builds the second one:
 
 ```bash
 cupel network up
@@ -335,6 +342,11 @@ peers from an ENR, and node 1's ENR does not exist until node 1 is running. So
 writes it into the environment, and only then starts the rest. That handoff is
 most of the reason there is a control plane here rather than a third compose
 file.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/startup-dark.svg">
+  <img alt="network init stamps genesis with the current time and picks a free subnet; wave one starts the bootnode and node one; the control plane reads node one's identity from its beacon API and writes it into network.env; only then does wave two start nodes two and three." src="docs/img/startup-light.svg" width="100%">
+</picture>
 
 **The subnet is chosen, not fixed.** A hard-coded `172.20.0.0/24` fails the
 moment another project on the machine has taken it, with a Docker error that

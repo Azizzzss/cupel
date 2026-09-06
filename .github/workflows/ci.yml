@@ -39,6 +39,14 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+      - name: The committed diagrams match their generator
+        # Same reasoning as the genesis check: a diagram edited by hand and not
+        # regenerated is a picture of a system that no longer exists, and there
+        # is no way to notice by reading either file.
+        run: |
+          python3 docs/make-diagrams.py
+          git diff --exit-code docs/img/
+
   contracts:
     name: contracts
     runs-on: ubuntu-latest

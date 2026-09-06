@@ -1,0 +1,128 @@
+# Build `cupel` for the three desktop platforms on every version tag and attach
+# the binaries to the release.
+#
+# The point is that trying Cupel should not require a Rust toolchain. Docker is
+# needed either way — the chain runs in containers — but the control plane is a
+# single binary, and asking somebody to install Rust before they can look at a
+# block is a tax with nothing behind it.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      # One platform failing to build should not hide whether the others did.
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: macos-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked -p cupel --target ${{ matrix.target }}
+
+      - name: It runs, and it is the version on the tag
+        # A binary that builds and will not start is worse than no binary. Both
+        # of these commands need no chain, so they work on a bare runner.
+        shell: bash
+        run: |
+          set -e
+          BIN="target/${{ matrix.target }}/release/cupel"
+          [ -f "$BIN.exe" ] && BIN="$BIN.exe"
+          "$BIN" --version
+          "$BIN" lab
+          "$BIN" contracts
+
+      - name: Package
+        shell: bash
+        run: |
+          set -e
+          mkdir -p dist
+          NAME="cupel-${{ github.ref_name }}-${{ matrix.name }}"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "dist/$NAME.zip" \
+              "./target/${{ matrix.target }}/release/cupel.exe" \
+              ./README.md ./LICENSE-MIT ./LICENSE-APACHE
+          else
+            tar -czf "dist/$NAME.tar.gz" \
+              -C "target/${{ matrix.target }}/release" cupel \
+              -C "$GITHUB_WORKSPACE" README.md LICENSE-MIT LICENSE-APACHE
+          fi
+          ls -la dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    # Only a real tag publishes. workflow_dispatch exists to check that the four
+    # builds still work without making a release out of it.
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Release notes from the changelog
+        # The changelog is written per release anyway, and retyping it into a
+        # release body is how the two start disagreeing.
+        run: |
+          python3 - "${{ github.ref_name }}" > notes.md <<'PY'
+          import re, sys
+          tag = sys.argv[1].lstrip("v")
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          match = re.search(
+              rf"^## \[{re.escape(tag)}\][^\n]*\n(.*?)(?=^## |\Z)",
+              text, re.S | re.M,
+          )
+          print(match.group(1).strip() if match else f"See CHANGELOG.md for {tag}.")
+          PY
+          cat notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body_path: notes.md
+          draft: false
