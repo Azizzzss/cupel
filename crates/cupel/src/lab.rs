@@ -485,7 +485,9 @@ async fn three_clients_one_chain() -> Result<()> {
     println!();
     field(
         "Verdict",
-        if roots.iter().all(|r| r == &roots[0]) && roots[0] != "—" {
+        if roots.iter().any(|r| r == "—") {
+            "not every client answered — is the devnet still starting?"
+        } else if roots.iter().all(|r| r == &roots[0]) {
             "one root, three clients — they agree"
         } else {
             "the clients disagree, which is worth investigating"
@@ -521,9 +523,18 @@ async fn three_clients_one_chain() -> Result<()> {
         );
     }
     println!();
+    // Three outcomes, not two. A node with no finalised block yet has not
+    // disagreed with anything — it has not been told one. Reporting that as a
+    // disagreement is exactly the kind of false alarm this walkthrough is
+    // supposed to teach people to avoid, and it fired on its first run.
+    let answered = hashes.iter().filter(|h| *h != "—").count();
     field(
         "Verdict",
-        if hashes.iter().all(|h| h == &hashes[0]) && hashes[0] != "—" {
+        if answered == 0 {
+            "nothing has finalised yet — this needs about ten minutes from genesis"
+        } else if answered < hashes.len() {
+            "finalising now: some nodes have the block, the rest are a slot behind"
+        } else if hashes.iter().all(|h| h == &hashes[0]) {
             "one block, three execution clients"
         } else {
             "the execution clients disagree"
