@@ -124,6 +124,7 @@ pub(crate) async fn run(root: &std::path::Path, number: u8) -> Result<()> {
 
 /// The Engine API handshake, one block's worth.
 async fn how_a_block_is_made(root: &std::path::Path) -> Result<()> {
+    require_lab().await?;
     let producer = lab_producer(root)?;
 
     say(
@@ -232,6 +233,7 @@ async fn how_a_block_is_made(root: &std::path::Path) -> Result<()> {
 
 /// Accepted, pending, included — three different states.
 async fn where_a_transaction_waits(root: &std::path::Path) -> Result<()> {
+    require_lab().await?;
     let producer = lab_producer(root)?;
 
     say(
@@ -696,6 +698,17 @@ async fn get(url: &str) -> Result<Value> {
 }
 
 /// Refuse to run a network walkthrough against a chain that is not there.
+async fn require_lab() -> Result<()> {
+    if rpc(crate::NODE_RPC_URL, "eth_chainId", &[]).await.is_err() {
+        bail!(
+            "this walkthrough needs the single-node chain — start it with \
+             `cupel up`, then run this again in another terminal"
+        );
+    }
+    Ok(())
+}
+
+/// The devnet is up, or say how to start it.
 async fn require_network(beacon: &str) -> Result<()> {
     if get(&format!("{beacon}/eth/v1/node/version")).await.is_err() {
         bail!(
@@ -901,6 +914,26 @@ mod tests {
         );
         assert_eq!(dig(&value, &["payloadStatus", "missing"]), None);
         assert_eq!(dig(&value, &["nothing", "here"]), None);
+    }
+
+    #[test]
+    fn every_walkthrough_checks_for_the_chain_it_needs() {
+        // A walkthrough that skips its guard reports a connection refused from
+        // somewhere inside the plumbing, which tells the reader nothing about
+        // what to do. Each one must ask first.
+        let source = include_str!("lab.rs");
+        for walk in WALKTHROUGHS {
+            let guard = match walk.mode {
+                Mode::Lab => "require_lab()",
+                Mode::Network => "require_network(",
+            };
+            assert!(
+                source.contains(guard),
+                "walkthrough {} needs {:?} and nothing calls {guard}",
+                walk.number,
+                walk.mode
+            );
+        }
     }
 
     #[test]
