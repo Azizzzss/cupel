@@ -48,6 +48,16 @@ allowed_empty() {
 fail=0
 checked=0
 
+# Which targets Prometheus is actually scraping, before any panel is judged.
+# Every panel being empty almost always means the targets were down rather than
+# the queries being wrong, and without this the output is twenty identical
+# failures that name the wrong culprit.
+echo "── targets"
+curl -sfG "$PROM/api/v1/query" --data-urlencode 'query=up' \
+  | jq -r '.data.result[] | "   \(if .value[1] == "1" then "up  " else "DOWN" end)  \(.metric.job)  \(.metric.instance)"' \
+  | sort || echo "   could not reach Prometheus at $PROM"
+echo
+
 # uids must be unique or Grafana silently serves one dashboard twice.
 dupes="$(jq -r '.uid' "$DASHBOARDS"/*.json | sort | uniq -d)"
 if [ -n "$dupes" ]; then

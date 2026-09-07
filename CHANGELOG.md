@@ -9,6 +9,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed
+
+- **The dashboard check waited for the wrong thing.** `up` appears as soon as
+  Prometheus has *attempted* a scrape and is `0` when the target refused, so
+  waiting for the series to exist was waiting for the first failure. Every panel
+  was then empty for a reason that had nothing to do with the panels, and the
+  output was twenty identical failures naming the wrong culprit. It now waits
+  for targets that are up, prints which are up and which are down before judging
+  anything, and sends a request through the gateway first — per-method counters
+  do not exist until something has been through it, and block production talks
+  to the node directly.
+
 Phase F: a Chainlink oracle.
 
 ---

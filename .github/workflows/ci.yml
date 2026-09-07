@@ -128,13 +128,28 @@ jobs:
         # the only way this stays true as geth moves.
         run: |
           ./target/debug/cupel observe
-          # Two scrape intervals, so rate() and sum_over_time() have a window.
-          for _ in $(seq 1 30); do
-            curl -sf 'http://127.0.0.1:9090/api/v1/query?query=up{job="cupel-execution"}' \
-              | grep -q '"value"' && break
-            sleep 1
+          # Wait for the targets to be *up*, not merely known. `up` appears as
+          # soon as Prometheus has attempted a scrape and is 0 when the target
+          # refused, so waiting for the series is waiting for the first failure.
+          for _ in $(seq 1 60); do
+            gw=$(curl -sfG http://127.0.0.1:9090/api/v1/query \
+                  --data-urlencode 'query=up{job="cupel-gateway"}==1' | jq -r '.data.result|length')
+            el=$(curl -sfG http://127.0.0.1:9090/api/v1/query \
+                  --data-urlencode 'query=up{job="cupel-execution"}==1' | jq -r '.data.result|length')
+            echo "targets up — gateway:${gw:-0} execution:${el:-0}"
+            [ "${gw:-0}" -ge 1 ] && [ "${el:-0}" -ge 1 ] && break
+            sleep 2
           done
-          sleep 10
+          # Per-method counters only exist once a request has been through the
+          # gateway, and block production talks to the node directly — so
+          # without this the traffic panel is empty for a reason that has
+          # nothing to do with the dashboard. Ask for something cheap.
+          for _ in $(seq 1 5); do
+            curl -s -X POST http://127.0.0.1:8545 -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' >/dev/null
+          done
+          # Two scrape intervals, so rate() and sum_over_time() have a window.
+          sleep 12
           .github/scripts/check-dashboards.sh http://127.0.0.1:9090 lab
 
       - name: Logs on failure
@@ -285,12 +300,16 @@ jobs:
         # at least one mode, and the skip-lists say which mode that is.
         run: |
           ./target/debug/cupel observe
-          for _ in $(seq 1 30); do
-            curl -sf 'http://127.0.0.1:9090/api/v1/query?query=up{job="cupel-consensus"}' \
-              | grep -q '"value"' && break
-            sleep 1
+          for _ in $(seq 1 60); do
+            cl=$(curl -sfG http://127.0.0.1:9090/api/v1/query \
+                  --data-urlencode 'query=up{job="cupel-consensus"}==1' | jq -r '.data.result|length')
+            el=$(curl -sfG http://127.0.0.1:9090/api/v1/query \
+                  --data-urlencode 'query=up{job="cupel-execution"}==1' | jq -r '.data.result|length')
+            echo "targets up — consensus:${cl:-0} execution:${el:-0}"
+            [ "${cl:-0}" -ge 3 ] && [ "${el:-0}" -ge 3 ] && break
+            sleep 2
           done
-          sleep 10
+          sleep 12
           .github/scripts/check-dashboards.sh http://127.0.0.1:9090 network
 
       - name: Logs on failure
