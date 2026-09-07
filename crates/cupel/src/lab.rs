@@ -338,6 +338,21 @@ async fn where_a_transaction_waits(root: &std::path::Path) -> Result<()> {
 
 // ------------------------------------------------------------ walkthrough 3
 
+/// A number from the beacon API's spec endpoint, which returns everything as a
+/// string.
+fn spec_number(spec: &Value, key: &str) -> Option<u64> {
+    spec["data"][key].as_str()?.parse().ok()
+}
+
+/// Seconds as something to read rather than divide.
+fn duration(seconds: u64) -> String {
+    match (seconds / 60, seconds % 60) {
+        (0, s) => format!("{s} seconds"),
+        (m, 0) => format!("{m} minutes"),
+        (m, s) => format!("{m} minutes {s}"),
+    }
+}
+
 /// What the beacon chain is counting.
 async fn slots_epochs_and_finality() -> Result<()> {
     let beacon = network::NODES[0].beacon;
@@ -357,9 +372,26 @@ async fn slots_epochs_and_finality() -> Result<()> {
         .unwrap_or("0")
         .parse()
         .unwrap_or(0);
+    // Asked for, not assumed. Every number below is derived from these two,
+    // and a walkthrough that hardcoded them said "6 seconds, so an epoch is 3
+    // minutes 12" for as long as the chain was actually running at twelve —
+    // teaching the wrong number in the lesson whose whole subject is this.
+    let spec = get(&format!("{beacon}/eth/v1/config/spec")).await?;
+    let per_slot = spec_number(&spec, "SECONDS_PER_SLOT").unwrap_or(12);
+    let per_epoch = spec_number(&spec, "SLOTS_PER_EPOCH").unwrap_or(32);
+
     field("Head slot", &slot.to_string());
-    field("Epoch", &format!("{} — 32 slots each", slot / 32));
-    field("Slot length", "6 seconds, so an epoch is 3 minutes 12");
+    field(
+        "Epoch",
+        &format!("{} — {per_epoch} slots each", slot / per_epoch),
+    );
+    field(
+        "Slot length",
+        &format!(
+            "{per_slot} seconds, so an epoch is {}",
+            duration(per_slot * per_epoch)
+        ),
+    );
     say(
         "A slot is a fixed opportunity for exactly one validator to propose. It \
          passes whether or not they do — a missed slot leaves a gap in the slot \
@@ -371,7 +403,7 @@ async fn slots_epochs_and_finality() -> Result<()> {
         "Duties are assigned in advance from the state, so every validator knows \
          which slots are theirs before the epoch begins.",
     );
-    let epoch = slot / 32;
+    let epoch = slot / per_epoch;
     let duties = get(&format!(
         "{beacon}/eth/v1/validator/duties/proposer/{epoch}"
     ))
@@ -414,11 +446,13 @@ async fn slots_epochs_and_finality() -> Result<()> {
             .as_str()
             .unwrap_or("?"),
     );
-    say(
-        "Finality trails the head by roughly two epochs — about six minutes on \
-         this chain, about thirteen on mainnet. That gap is not latency waiting \
-         to be optimised away; it is how long collecting the votes takes.",
-    );
+    say(&format!(
+        "Finality trails the head by roughly two epochs — about {} here. This \
+         chain uses mainnet's slot time, so that is mainnet's number too. The \
+         gap is not latency waiting to be optimised away; it is how long \
+         collecting the votes takes.",
+        duration(2 * per_slot * per_epoch)
+    ));
 
     step(4, "The threshold, in this network's numbers");
     field("Validators", "64, split 22 / 21 / 21 across three nodes");
@@ -533,7 +567,7 @@ async fn three_clients_one_chain() -> Result<()> {
     field(
         "Verdict",
         if answered == 0 {
-            "nothing has finalised yet — this needs about ten minutes from genesis"
+            "nothing has finalised yet — four epochs from genesis, about 25 minutes"
         } else if answered < hashes.len() {
             "finalising now: some nodes have the block, the rest are a slot behind"
         } else if hashes.iter().all(|h| h == &hashes[0]) {
@@ -853,6 +887,27 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_duration_reads_as_prose() {
+        assert_eq!(duration(45), "45 seconds");
+        assert_eq!(duration(384), "6 minutes 24");
+        assert_eq!(duration(768), "12 minutes 48");
+        assert_eq!(duration(120), "2 minutes");
+    }
+
+    #[test]
+    fn the_spec_endpoint_returns_strings_not_numbers() {
+        // Every value the beacon API's spec endpoint returns is a JSON string,
+        // including the numeric ones. Reading them as numbers gets None and a
+        // walkthrough that silently falls back to a default it made up.
+        let spec = serde_json::json!({
+            "data": { "SECONDS_PER_SLOT": "12", "SLOTS_PER_EPOCH": "32" }
+        });
+        assert_eq!(spec_number(&spec, "SECONDS_PER_SLOT"), Some(12));
+        assert_eq!(spec_number(&spec, "SLOTS_PER_EPOCH"), Some(32));
+        assert_eq!(spec_number(&spec, "NOT_A_KEY"), None);
+    }
 
     #[test]
     fn walkthroughs_are_numbered_from_one_without_gaps() {

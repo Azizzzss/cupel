@@ -273,6 +273,13 @@ async fn up(root: &Path, block_time: u64, keep: bool, listen: &str) -> Result<()
 
     let gateway_addr = format!("{listen}:{GATEWAY_PORT}");
     let listener = bind(&gateway_addr, "gateway").await?;
+    // 127.0.0.1 reaches a socket bound to 0.0.0.0, so the usual banner is still
+    // true there and friendlier than printing a wildcard. A specific other
+    // address is different: saying localhost would be a lie.
+    let gateway_url = match listen {
+        "127.0.0.1" | "0.0.0.0" | "localhost" => GATEWAY_URL.to_string(),
+        other => format!("http://{other}:{GATEWAY_PORT}"),
+    };
     let serving = tokio::spawn(cupel_gateway::serve_on(Arc::clone(&gateway), listener));
     let probing = tokio::spawn(Arc::clone(&gateway).probe_forever());
 
@@ -290,7 +297,7 @@ async fn up(root: &Path, block_time: u64, keep: bool, listen: &str) -> Result<()
     let signer_listener = bind(SIGNER_ADDR, "signer").await?;
     let signing = tokio::spawn(cupel_signer::serve_on(Arc::clone(&signer), signer_listener));
 
-    banner(&head, block_time);
+    banner(&head, block_time, &gateway_url);
 
     let result = produce_until_interrupted(&producer, &mut head).await;
 
@@ -524,11 +531,11 @@ async fn compose_file(root: &Path, file: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn banner(head: &Head, block_time: u64) {
+fn banner(head: &Head, block_time: u64, gateway_url: &str) {
     println!();
     println!("  Cupel v{}", env!("CARGO_PKG_VERSION"));
     println!("  ---------------------------------------------------");
-    println!("  RPC          {GATEWAY_URL}");
+    println!("  RPC          {gateway_url}");
     println!("  Node         {NODE_RPC_URL} (behind the gateway)");
     println!("  Metrics      {GATEWAY_URL}/metrics");
     println!("  Signer       {SIGNER_URL}  (policy at /policy, decisions at /audit)");

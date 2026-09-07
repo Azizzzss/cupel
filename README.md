@@ -557,7 +557,7 @@ Network mode uses its own ports, so both modes can run at once:
 - **Foundry**, only to change a contract — not to run one
 
 ```bash
-cargo test --workspace          # 103 tests
+cargo test --workspace          # 118 tests
 cd contracts && forge test      # 15 tests
 ```
 

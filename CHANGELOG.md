@@ -11,6 +11,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The walkthrough about slots stated the slot time from memory.** Walkthrough
+  3 reads the head slot, the epoch and the proposer duties off the running
+  chain, and then printed "6 seconds, so an epoch is 3 minutes 12" from a string
+  in the source — wrong on both counts, in the one lesson whose entire subject
+  is how a chain divides time. It now asks the chain for `SECONDS_PER_SLOT` and
+  `SLOTS_PER_EPOCH` and derives every duration from them, so the lesson cannot
+  disagree with the thing it is describing.
+
 - **The devnet's slot time was never six seconds.** `SECONDS_PER_SLOT=6` was
   passed to the genesis generator from the first day of network mode and the
   generator does not template that value, so the key was simply absent from the
@@ -29,6 +37,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it, and CI asks the running chain what it is using and fails if it disagrees —
   because the failure being guarded against was never a wrong value, it was a
   value nobody wrote and nobody missed.
+
+- The banner printed `http://127.0.0.1:8545` whatever `--bind` was given. That
+  is true for `0.0.0.0`, where localhost still reaches the socket, and a lie for
+  any other address.
 
 - **Metrics never worked on plain Linux Docker.** Prometheus scraped the clients
   through `host.docker.internal`, which gives a container a route to the host
