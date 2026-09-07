@@ -174,7 +174,7 @@ jobs:
     # know that three consensus clients still agree after a dependency moves.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -206,30 +206,55 @@ jobs:
       - name: Bring up the devnet
         run: ./target/debug/cupel network up --detach
 
+      - name: The clients run the slot time we asked for
+        # This is the check that would have caught the bug on the day it was
+        # introduced. `SECONDS_PER_SLOT` is not a value the genesis generator
+        # templates, so asking it for six did nothing: the key was absent from
+        # the config, all three clients used the mainnet preset's twelve, and
+        # the chain ran correctly at half the intended rate for two releases.
+        # Nothing failed. The only symptom was finality arriving twice as late
+        # as every comment and banner promised.
+        #
+        # Writing the key in by hand is not a fix either — Lighthouse validates
+        # the config against its compiled-in preset and refuses to start with
+        # "YAML configuration incompatible with spec constants for mainnet".
+        #
+        # So twelve is the real number, and this asks the running chain rather
+        # than reading the file, because what matters is what the clients use.
+        run: |
+          set -e
+          spec=$(curl -sf http://127.0.0.1:5052/eth/v1/config/spec)
+          slot=$(printf '%s' "$spec" | jq -r '.data.SECONDS_PER_SLOT')
+          epoch=$(printf '%s' "$spec" | jq -r '.data.SLOTS_PER_EPOCH')
+          echo "the chain is running ${slot}s slots, ${epoch} slots to an epoch"
+          test "$slot" = "12"
+
       - name: The chain finalises
-        # Finality is the whole claim of this mode. Two thirds of the stake must
-        # agree, and the stake is split so that no single node holds it.
+        # Finality is the whole claim of this mode. More than two thirds of the
+        # stake must agree, and the stake is split 22/21/21 so that no single
+        # node holds it — a finalised epoch is three independent implementations
+        # agreeing, not one asserting.
         #
-        # Thirty minutes, not twenty, and the difference is not slack. An
-        # epoch is 32 six-second slots, so a chain keeping time finalises inside
-        # ten minutes. A GitHub runner does not keep time: nine containers —
-        # three geth, three beacon nodes, two validators — on two cores miss
-        # roughly every other slot, and a run that reached slot 98 in twenty
-        # minutes was producing a block every twelve seconds rather than every
-        # six. That halves the epoch rate, so finality lands just outside the old
-        # window, and the step reported "no finalised epoch after twenty minutes"
-        # — true, and silent about why.
+        # Four epochs of 32 twelve-second slots is about twenty-five minutes,
+        # and a loaded runner misses some slots, so the window is forty-five.
         #
-        # So the wait is long enough for a chain running at half speed, and what
-        # it prints says whether that is what is happening: the head slot beside
-        # the slot the wall clock expects. Behind means the runner is starved,
-        # not that consensus is broken.
+        # A previous version of this comment explained the same delay as "a
+        # starved runner missing slots" and was wrong. The observation behind it
+        # was right — blocks were arriving every twelve seconds rather than
+        # every six — but the cause was the configuration above, not the runner.
+        # The step now prints the head slot beside the slot the clock expects,
+        # computed from the slot time the chain reports rather than from one
+        # assumed here, so the number cannot quietly mean something else again.
         run: |
           genesis=$(curl -sf http://127.0.0.1:5052/eth/v1/beacon/genesis \
             | jq -r '.data.genesis_time // 0' 2>/dev/null || echo 0)
           case "$genesis" in ''|*[!0-9]*) genesis=0 ;; esac
 
-          for _ in $(seq 1 150); do
+          per_slot=$(curl -sf http://127.0.0.1:5052/eth/v1/config/spec \
+            | jq -r '.data.SECONDS_PER_SLOT // 12' 2>/dev/null || echo 12)
+          case "$per_slot" in ''|*[!0-9]*|0) per_slot=12 ;; esac
+
+          for _ in $(seq 1 270); do
             # A failed request yields an empty string, and an empty string is
             # not "0" — testing for inequality would report a chain that never
             # answered as a chain that finalised. Insist on a positive integer.
@@ -244,7 +269,7 @@ jobs:
             case "$slot" in ''|*[!0-9]*) slot=0 ;; esac
 
             if [ "$genesis" -gt 0 ]; then
-              want=$(( ( $(date +%s) - genesis ) / 6 ))
+              want=$(( ( $(date +%s) - genesis ) / per_slot ))
               echo "slot $slot of an expected $want   justified $just   finalized $epoch"
             else
               echo "slot $slot   justified $just   finalized $epoch"
@@ -255,12 +280,14 @@ jobs:
           done
 
           echo
-          echo "no finalised epoch after thirty minutes"
+          echo "no finalised epoch after forty-five minutes"
           if [ "$genesis" -gt 0 ]; then
-            want=$(( ( $(date +%s) - genesis ) / 6 ))
-            echo "the chain reached slot $slot where the clock expected $want."
-            echo "well short of that is a starved runner missing slots, not a"
-            echo "consensus failure — the same chain finalises on a laptop."
+            want=$(( ( $(date +%s) - genesis ) / per_slot ))
+            echo "the chain reached slot $slot where the clock expected $want,"
+            echo "at ${per_slot}s to a slot. Close to the expected slot means the"
+            echo "chain kept time and consensus did not converge; well short of"
+            echo "it means slots were missed, which on a runner this size is"
+            echo "load rather than disagreement."
           fi
           exit 1
 

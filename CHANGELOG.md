@@ -11,6 +11,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The devnet's slot time was never six seconds.** `SECONDS_PER_SLOT=6` was
+  passed to the genesis generator from the first day of network mode and the
+  generator does not template that value, so the key was simply absent from the
+  config it produced and all three clients used the mainnet preset's twelve. The
+  chain was correct throughout. Nothing errored. The only symptom was that
+  finality arrived twice as late as the banner, the design document and CI's
+  arithmetic all said it would — and CI's finality window was set from the wrong
+  number, so the job failed with "no finalised epoch" on a chain that was going
+  to finalise nine minutes later.
+
+  Writing the key in by hand is not a fix: Lighthouse validates the config
+  against the preset compiled into it and refuses to start with *YAML
+  configuration incompatible with spec constants for mainnet*. Six-second slots
+  need minimal-preset binaries. So the number is twelve everywhere now, `init`
+  checks the generated config against what the code assumes rather than trusting
+  it, and CI asks the running chain what it is using and fails if it disagrees —
+  because the failure being guarded against was never a wrong value, it was a
+  value nobody wrote and nobody missed.
+
 - **Metrics never worked on plain Linux Docker.** Prometheus scraped the clients
   through `host.docker.internal`, which gives a container a route to the host
   and nothing more: the ports are published on `127.0.0.1`, so the scrape

@@ -299,7 +299,8 @@ cupel network up
   node2   Prysm       rpc http://127.0.0.1:8556  beacon http://127.0.0.1:5152
   node3   Teku        rpc http://127.0.0.1:8557  beacon http://127.0.0.1:5252
 
-  Chain id     31337, 64 validators, 6s slots, Electra
+  Chain id     31337, 64 validators, 12s slots, Electra
+  Finality     four epochs of 32 slots — about 25 minutes from genesis
   Contracts    the same addresses as lab mode
 ```
 

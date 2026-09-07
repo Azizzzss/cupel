@@ -41,9 +41,31 @@ const HELPER: &str = "alpine";
 /// their keys takes seconds. Mainnet's default in this generator is 16384.
 const VALIDATORS: usize = 64;
 
-/// Half of mainnet's twelve. An epoch is 32 slots either way, so this halves
-/// the wait for the first finalised epoch, from six and a half minutes to three.
-const SECONDS_PER_SLOT: u64 = 6;
+/// Twelve seconds, the same as mainnet, because it cannot be anything else.
+///
+/// This was six for two releases and never took effect. `SECONDS_PER_SLOT` is
+/// not a value the genesis generator templates, so the key was absent from the
+/// config it produced and every client used its preset default of twelve — a
+/// chain running correctly at half the intended rate, with no error anywhere
+/// and only one symptom: finality arriving twice as late as every comment here
+/// promised.
+///
+/// Writing the key in by hand does not help either. Lighthouse validates the
+/// config against the preset compiled into it and refuses to start:
+///
+/// ```text
+/// YAML configuration incompatible with spec constants for mainnet
+/// ```
+///
+/// Six-second slots need minimal-preset clients, which are different binaries
+/// and a different chain shape. So the honest number is twelve, and four epochs
+/// of thirty-two twelve-second slots is why a devnet takes about twenty-five
+/// minutes to reach its first finalised epoch.
+const SECONDS_PER_SLOT: u64 = 12;
+
+/// What a client uses when the config declares no slot time. Lighthouse, Prysm
+/// and Teku all compile the mainnet preset in, and all three fall back to this.
+const MAINNET_SECONDS_PER_SLOT: u64 = 12;
 
 /// How long after generation the beacon chain starts. Long enough for every
 /// container to be up and listening before slot zero, short enough that nobody
@@ -157,8 +179,6 @@ pub(crate) async fn init(root: &Path) -> Result<()> {
         &format!("GENESIS_TIMESTAMP={now}"),
         "-e",
         &format!("GENESIS_DELAY={GENESIS_DELAY}"),
-        "-e",
-        &format!("SECONDS_PER_SLOT={SECONDS_PER_SLOT}"),
         // Electra is the head of this chain, not Fulu, and that is a deliberate
         // step back from the tip.
         //
@@ -350,7 +370,31 @@ fn testnet_dir(dir: &Path) -> Result<()> {
     // No consensus bootnodes are known at generation time; node one's ENR is
     // passed on the command line once it exists.
     std::fs::write(testnet.join("boot_enr.yaml"), "[]\n")?;
+
+    // Confirm the chain will run at the rate this file claims rather than
+    // trusting that it does. Getting this wrong is silent: the clients start,
+    // the chain is correct, and only the arithmetic in every comment is off.
+    let config = std::fs::read_to_string(testnet.join("config.yaml"))?;
+    let effective = seconds_per_slot(&config).unwrap_or(MAINNET_SECONDS_PER_SLOT);
+    if effective != SECONDS_PER_SLOT {
+        bail!(
+            "the consensus config gives {effective}s slots, not the {SECONDS_PER_SLOT}s \
+             assumed here — every duration Cupel reports would be wrong"
+        );
+    }
     Ok(())
+}
+
+/// The slot duration a consensus config declares, if it declares one.
+///
+/// `None` means the clients will use their preset's default, which is the state
+/// this chain was in for its first two releases.
+fn seconds_per_slot(config: &str) -> Option<u64> {
+    config
+        .lines()
+        .find_map(|line| line.strip_prefix("SECONDS_PER_SLOT:"))
+        .and_then(|value| value.split('#').next())
+        .and_then(|value| value.trim().parse().ok())
 }
 
 // -------------------------------------------------------------- bringing up
@@ -809,6 +853,7 @@ fn banner(gateway: bool) {
     }
     println!();
     println!("  Chain id     31337, {VALIDATORS} validators, {SECONDS_PER_SLOT}s slots, Electra");
+    println!("  Finality     four epochs of 32 slots — about 25 minutes from genesis");
     println!("  Contracts    the same addresses as lab mode");
     println!();
     println!("  The first finalised epoch is a few minutes away.");
@@ -830,6 +875,37 @@ fn banner(gateway: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_config_without_the_key_reports_no_slot_time() {
+        // Exactly what the generator produced for two releases: a config with
+        // no SECONDS_PER_SLOT at all, which every client silently read as the
+        // mainnet preset's twelve.
+        let generated = "PRESET_BASE: 'mainnet'\nCONFIG_NAME: 'testnet'\nGENESIS_DELAY: 30\n";
+        assert_eq!(seconds_per_slot(generated), None);
+    }
+
+    #[test]
+    fn the_slot_time_is_read_back_the_way_it_was_written() {
+        assert_eq!(seconds_per_slot("SECONDS_PER_SLOT: 6\n"), Some(6));
+        assert_eq!(
+            seconds_per_slot("SECONDS_PER_SLOT: 12  # mainnet"),
+            Some(12)
+        );
+        // A key that merely starts the same is a different key.
+        assert_eq!(seconds_per_slot("SECONDS_PER_SLOT_EXTRA: 6\n"), None);
+    }
+
+    #[test]
+    fn the_assumed_slot_time_is_the_one_clients_fall_back_to() {
+        // The generator declares no slot time, so the chain runs the preset
+        // default. Anything else here is an assumption the chain does not
+        // share, and every duration Cupel prints would be wrong by the ratio.
+        assert_eq!(
+            SECONDS_PER_SLOT, MAINNET_SECONDS_PER_SLOT,
+            "a config with no SECONDS_PER_SLOT gives mainnet-preset slots"
+        );
+    }
 
     #[test]
     fn validators_are_split_with_the_remainder_first() {
