@@ -513,6 +513,7 @@ hide exactly the kind of difference this mode exists to surface.
 | `cupel up` | start the chain and produce blocks until Ctrl-C |
 | `cupel up --block-time 5` | slower blocks |
 | `cupel up --keep` | leave the container running after exit |
+| `cupel up --bind 0.0.0.0` | serve the gateway off localhost — needed for metrics on plain Linux Docker |
 | `cupel down` | stop the chain, keep its data |
 | `cupel reset` | stop the chain and delete its data |
 | `cupel status` | is it up, and where has it got to |

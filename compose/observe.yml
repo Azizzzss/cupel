@@ -23,8 +23,16 @@ services:
       - ../config/prometheus:/etc/prometheus:ro
       - prometheus-data:/prometheus
     # The gateway runs on the host, not in a container, so Prometheus has to be
-    # told how to reach back out. Docker Desktop provides this name already;
-    # the mapping makes it work on plain Linux Docker too.
+    # told how to reach back out for that one target. Everything else is scraped
+    # by container name over the Cupel network, which `cupel observe` attaches
+    # this container to.
+    #
+    # This mapping gives the container a *route* to the host and nothing more.
+    # The gateway binds 127.0.0.1 by default, so on plain Linux Docker the
+    # scrape still arrives at an address nothing is listening on — start it with
+    # `cupel up --bind 0.0.0.0` if you want gateway metrics there. Docker
+    # Desktop's port proxy makes it work either way, which is why this went
+    # unnoticed.
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

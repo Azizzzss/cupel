@@ -52,6 +52,8 @@ const NODE_RPC_URL: &str = "http://127.0.0.1:8546";
 const ENGINE_URL: &str = "http://127.0.0.1:8551";
 /// Where everything else points.
 const GATEWAY_ADDR: &str = "127.0.0.1:8545";
+/// The port half of the above, so `--bind` can choose the interface.
+const GATEWAY_PORT: u16 = 8545;
 const GATEWAY_URL: &str = "http://127.0.0.1:8545";
 /// The signing service. 8550 is the port Clef used to hold, which is where
 /// anyone looking for a signer will think to look.
@@ -87,6 +89,16 @@ enum Commands {
         /// Leave the container running after Cupel exits.
         #[arg(long)]
         keep: bool,
+
+        /// Address the gateway listens on.
+        ///
+        /// Localhost by default. `0.0.0.0` makes it reachable from containers
+        /// and from the network, which is what Prometheus needs on plain Linux
+        /// Docker and what pointing another machine at this chain needs. The
+        /// signer is deliberately not covered: it holds a key, and moving that
+        /// off localhost should be a separate decision taken on purpose.
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
     },
     /// Stop the chain, keeping its data.
     Down,
@@ -157,8 +169,13 @@ async fn main() -> Result<()> {
     match cli.command.unwrap_or(Commands::Up {
         block_time: 1,
         keep: false,
+        bind: "127.0.0.1".to_string(),
     }) {
-        Commands::Up { block_time, keep } => up(&root, block_time, keep).await,
+        Commands::Up {
+            block_time,
+            keep,
+            bind,
+        } => up(&root, block_time, keep, &bind).await,
         Commands::Down => down(&root, false).await,
         Commands::Reset => down(&root, true).await,
         Commands::Status => status(&root).await,
@@ -223,7 +240,7 @@ fn find_root() -> Result<PathBuf> {
     }
 }
 
-async fn up(root: &Path, block_time: u64, keep: bool) -> Result<()> {
+async fn up(root: &Path, block_time: u64, keep: bool, listen: &str) -> Result<()> {
     let secret = ensure_jwt_secret(root)?;
 
     println!("cupel: starting the execution client");
@@ -254,7 +271,8 @@ async fn up(root: &Path, block_time: u64, keep: bool) -> Result<()> {
     ));
     gateway.probe_once().await;
 
-    let listener = bind(GATEWAY_ADDR, "gateway").await?;
+    let gateway_addr = format!("{listen}:{GATEWAY_PORT}");
+    let listener = bind(&gateway_addr, "gateway").await?;
     let serving = tokio::spawn(cupel_gateway::serve_on(Arc::clone(&gateway), listener));
     let probing = tokio::spawn(Arc::clone(&gateway).probe_forever());
 
@@ -373,6 +391,7 @@ async fn observe(root: &Path, down: bool) -> Result<()> {
 
     println!("cupel: starting prometheus and grafana");
     compose_file(root, "compose/observe.yml", &["up", "-d"]).await?;
+    attach_prometheus().await;
     println!();
     println!("  Grafana      http://127.0.0.1:3000");
     println!("  Prometheus   http://127.0.0.1:9090");
@@ -382,6 +401,32 @@ async fn observe(root: &Path, down: bool) -> Result<()> {
     println!("  Dashboards   gateway, execution, network — provisioned, no login needed.");
     println!();
     Ok(())
+}
+
+/// Put Prometheus on whichever Cupel networks exist, so it can scrape the
+/// clients by container name.
+///
+/// Their metrics ports are published on `127.0.0.1` for a person to curl, and a
+/// container reaching `host.docker.internal` arrives on the bridge address
+/// instead — where nothing is listening. Docker Desktop's port proxy papers
+/// over that; on plain Linux Docker every scrape was refused and every panel
+/// drew an empty box, which on a lab chain is indistinguishable from a quiet
+/// one.
+///
+/// Compose cannot express this: an external network it cannot find is an error,
+/// and which of the two exists depends on which mode is running. Failures are
+/// ignored on purpose — already attached is the common case, and the mode that
+/// is not running has no network to join.
+async fn attach_prometheus() {
+    for network in ["cupel_default", "cupel-network"] {
+        Command::new("docker")
+            .args(["network", "connect", network, "cupel-prometheus"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .ok();
+    }
 }
 
 async fn status(root: &Path) -> Result<()> {

@@ -1,21 +1,30 @@
-# Two things are worth scraping in lab mode. The gateway says what clients
-# actually experienced, which is not the same as what the node thinks of itself;
-# the node says why — a transaction the gateway saw accepted can still be sitting
-# in the pool because it pays under the miner's floor, and only geth's own
-# counters admit it.
+# What to scrape, and from where.
 #
-# In network mode the node's view is the whole point. Three execution clients and
-# three different consensus clients should agree about the head, and a scrape of
-# each one is how that is checked rather than asserted.
+# The clients are scraped by container name over the Docker network Cupel
+# created, not through the host. Their ports are published on 127.0.0.1 for a
+# person to curl, and a container reaching `host.docker.internal` arrives on the
+# bridge address instead — where nothing is listening. Docker Desktop's port
+# proxy hides that; on plain Linux Docker every scrape was refused and every
+# panel drew an empty box. Going directly over the network is both correct and
+# one hop shorter.
 #
-# Every target for a mode that is not running reports down, and Prometheus says
-# so rather than hiding it. That is the honest answer, and the dashboards are
-# written to expect it.
+# `cupel observe` attaches this container to whichever Cupel networks exist, so
+# the targets for the mode that is not running simply resolve to nothing and
+# report as down — which is the honest answer.
+#
+# In lab mode the gateway is the only thing worth scraping: what matters is what
+# clients experienced, not what the node thinks of itself. In network mode the
+# node's own view is the point — three execution clients and three different
+# consensus clients should agree about the head, and a scrape of each is how
+# that is checked rather than asserted.
 global:
   scrape_interval: 5s
   evaluation_interval: 5s
 
 scrape_configs:
+  # The gateway runs on the host, not in a container, so this one does have to
+  # reach back out. It is the only target that does, and the only one that needs
+  # `cupel up --bind 0.0.0.0` to be scrapeable on plain Linux Docker.
   - job_name: cupel-gateway
     metrics_path: /metrics
     static_configs:
@@ -29,22 +38,22 @@ scrape_configs:
     # target that answers, scrapes clean, and yields nothing.
     metrics_path: /debug/metrics/prometheus
     static_configs:
-      # Lab mode's single node, in the same job as the devnet's three so one
-      # dashboard serves both modes and only the label says which is which.
-      - targets: ["host.docker.internal:6060"]
+      - targets: ["cupel-geth:6060"]
         labels: { node: lab, client: geth }
-      - targets: ["host.docker.internal:6061"]
+      - targets: ["cupel-el1:6060"]
         labels: { node: node1, client: geth }
-      - targets: ["host.docker.internal:6062"]
+      - targets: ["cupel-el2:6060"]
         labels: { node: node2, client: geth }
-      - targets: ["host.docker.internal:6063"]
+      - targets: ["cupel-el3:6060"]
         labels: { node: node3, client: geth }
 
+  # Each consensus client publishes on its own port, because none of the three
+  # agreed on a default.
   - job_name: cupel-consensus
     static_configs:
-      - targets: ["host.docker.internal:6071"]
+      - targets: ["cupel-cl1:5054"]
         labels: { node: node1, client: lighthouse }
-      - targets: ["host.docker.internal:6072"]
+      - targets: ["cupel-cl2:8080"]
         labels: { node: node2, client: prysm }
-      - targets: ["host.docker.internal:6073"]
+      - targets: ["cupel-cl3:8008"]
         labels: { node: node3, client: teku }

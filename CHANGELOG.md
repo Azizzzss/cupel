@@ -11,6 +11,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Metrics never worked on plain Linux Docker.** Prometheus scraped the clients
+  through `host.docker.internal`, which gives a container a route to the host
+  and nothing more: the ports are published on `127.0.0.1`, so the scrape
+  arrived on the bridge address where nothing was listening. Every target was
+  refused and every panel drew an empty box — indistinguishable, on a lab chain,
+  from a quiet one. Docker Desktop's port proxy made it work anyway, which is
+  why it went unnoticed for three phases.
+
+  The clients are now scraped by container name over the network Cupel already
+  created, which is both correct and one hop shorter; `cupel observe` attaches
+  Prometheus to whichever of the two networks exists, because compose treats an
+  external network it cannot find as an error and which one exists depends on
+  the mode. The gateway is the one target that genuinely runs on the host, and
+  `cupel up --bind 0.0.0.0` now makes it reachable. The signer is deliberately
+  not covered by that flag.
+
 - **The dashboard check waited for the wrong thing.** `up` appears as soon as
   Prometheus has *attempted* a scrape and is `0` when the target refused, so
   waiting for the series to exist was waiting for the first failure. Every panel
