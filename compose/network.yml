@@ -373,6 +373,15 @@ services:
       - --rest-api-interface=0.0.0.0
       - --rest-api-port=5052
       - --rest-api-host-allowlist=*
+      # Not the same thing as the line above, which is a Host header allowlist.
+      # Without this Teku answers curl perfectly and sends no
+      # Access-Control-Allow-Origin, so a browser gets the response and throws
+      # it away — the control room showed two clients and a dash for the third,
+      # while the CLI reading the same endpoint saw all three.
+      #
+      # Three clients, three names for one idea: Lighthouse has
+      # --http-allow-origin, Prysm --http-cors-domain, Teku this.
+      - --rest-api-cors-origins=*
       - --p2p-enabled=true
       - --p2p-advertised-ip=${IP_CL3}
       - --p2p-port=9000
