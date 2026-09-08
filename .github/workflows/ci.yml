@@ -71,6 +71,54 @@ jobs:
           cargo run -q -p cupel -- genesis
           git diff --exit-code config/genesis/genesis.json
 
+  ui:
+    name: ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Lints
+        run: npx oxlint src
+        working-directory: ui
+
+      - name: Types
+        run: npx tsc --noEmit
+        working-directory: ui
+
+      - name: The committed bundle matches its source
+        # `ui/dist` is a build output kept in the repository, because it is
+        # compiled into the binary with rust-embed. That is what lets `cargo
+        # build` and all four release targets produce a working control room
+        # with no JavaScript toolchain anywhere near them — the same trade the
+        # contracts make by committing bytecode into genesis.
+        #
+        # The price of that trade is paid here. Rebuild from source; fail if the
+        # result differs from what is committed. Without this step a release
+        # ships whichever bundle someone last built by hand, and a change to the
+        # TypeScript that nobody rebuilt is invisible: the tests pass, the
+        # binary links, and the page is last week's.
+        #
+        # Staged rather than plain `git diff`, so a renamed asset — the file
+        # names carry a content hash, so any real change renames them — counts
+        # as a difference instead of arriving as an untracked file nobody looks
+        # at.
+        run: |
+          npm ci
+          npm run build
+          cd ..
+          git add --intent-to-add ui/dist
+          git diff --exit-code -- ui/dist
+        working-directory: ui
+
   integration:
     name: integration
     runs-on: ubuntu-latest

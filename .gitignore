@@ -12,7 +12,6 @@ config/network/
 # node / explorer
 node_modules/
 .next/
-dist/
 .env
 .env.local
 
@@ -24,10 +23,15 @@ contracts/broadcast/
 # chain data
 data/
 *.db
-\n
 # The control room's dependencies. `ui/dist` is deliberately *not* ignored: it
 # is compiled into the binary, so committing it is what lets `cargo build`
 # produce a working control room without a JavaScript toolchain — the same
 # reason the contracts' bytecode is committed. CI rebuilds it and fails on a
 # difference, so it cannot go stale unnoticed.
+#
+# Saying that is not enough to make it true. A bare `dist/` above ignored every
+# directory of that name at any depth, and Vite's scaffolded `ui/.gitignore`
+# ignores its own output as well; between them the bundle was never committed
+# at all, while this comment sat here explaining why it was. Nothing failed:
+# the working tree had the files, so every local build embedded them.
 ui/node_modules/

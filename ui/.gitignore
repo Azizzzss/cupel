@@ -8,9 +8,13 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
 dist-ssr
 *.local
+
+# Not `dist`. It is a build output and Vite's scaffold ignores it, which is
+# right for a site that gets deployed and wrong here: this bundle is compiled
+# into the cupel binary, so it has to be in the repository for `cargo build` to
+# work at all. CI rebuilds it from source and fails on any difference.
 
 # Editor directories and files
 .vscode/*
