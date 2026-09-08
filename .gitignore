@@ -24,3 +24,8 @@ contracts/broadcast/
 # chain data
 data/
 *.db
+\n
+# The control room's dependencies and build output. `dist` is committed once the
+# binary embeds it; until then it is a build artefact like any other.
+ui/node_modules/
+ui/dist/

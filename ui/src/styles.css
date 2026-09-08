@@ -1,0 +1,326 @@
+/* The palette is the assay the project is named for: bone ash, furnace dark,
+   the orange of cupellation, and the cool bead of refined metal that survives
+   it. Light mode is the vessel; dark mode is the inside of the furnace.
+
+   Every colour is defined on bare :root and only redefined by theme, so a
+   component never has a colour that exists in one theme and not the other. */
+
+:root {
+  --bg: #efece4;
+  --surface: #f8f6f1;
+  --surface-2: #e5e1d6;
+  --ink: #1a1712;
+  --muted: #6b6459;
+  --faint: #8c8478;
+  --rule: #d6d0c3;
+
+  --glow: #b84a15; /* cupellation — the one accent */
+  --bead: #3d5e6e; /* refined metal — the "these agree" colour */
+  --litharge: #7e6120; /* the oxide that soaks away — warnings */
+  --wrong: #a3271b;
+
+  --shadow: 0 1px 2px rgb(26 23 18 / 5%), 0 8px 24px -12px rgb(26 23 18 / 18%);
+
+  --sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --serif: Fraunces, Georgia, 'Times New Roman', serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #131110;
+    --surface: #1c1a17;
+    --surface-2: #24211d;
+    --ink: #efeadf;
+    --muted: #9b9285;
+    --faint: #7c7469;
+    --rule: #332e27;
+
+    --glow: #f0813e;
+    --bead: #a3bac8;
+    --litharge: #cba755;
+    --wrong: #e8674f;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 10px 30px -14px rgb(0 0 0 / 70%);
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #131110;
+  --surface: #1c1a17;
+  --surface-2: #24211d;
+  --ink: #efeadf;
+  --muted: #9b9285;
+  --faint: #7c7469;
+  --rule: #332e27;
+
+  --glow: #f0813e;
+  --bead: #a3bac8;
+  --litharge: #cba755;
+  --wrong: #e8674f;
+
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 10px 30px -14px rgb(0 0 0 / 70%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--serif);
+  text-wrap: balance;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--glow);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Digits that sit in columns must not dance as they change. Almost every
+   number on this page updates every second. */
+.tnum,
+.field-value,
+.stat-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+/* ----------------------------------------------------------------- layout */
+
+.app {
+  max-width: 84rem;
+  margin: 0 auto;
+  padding: clamp(1rem, 3vw, 2rem) clamp(1rem, 3vw, 2.5rem) 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.grid {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------ panel */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.panel-head h2 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: var(--sans);
+}
+
+.panel-note {
+  font-size: 0.76rem;
+  color: var(--faint);
+}
+
+.panel-body {
+  padding: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.panel-body.tight {
+  gap: 0.4rem;
+}
+
+/* ------------------------------------------------------------------ field */
+
+.field {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.87rem;
+}
+
+.field-label {
+  color: var(--muted);
+}
+
+.field-value {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+/* ------------------------------------------------------------- verdict pill */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid currentcolor;
+  font-size: 0.73rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.pill-agree {
+  color: var(--bead);
+}
+
+.pill-working {
+  color: var(--litharge);
+}
+
+.pill-wrong {
+  color: var(--wrong);
+}
+
+.pill-idle {
+  color: var(--faint);
+}
+
+.dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: currentcolor;
+  flex: none;
+}
+
+/* ------------------------------------------------------------------ table */
+
+table.plain {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+table.plain th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 0 0.6rem 0.5rem 0;
+  white-space: nowrap;
+}
+
+table.plain td {
+  padding: 0.42rem 0.6rem 0.42rem 0;
+  border-top: 1px solid var(--rule);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+table.plain td.name {
+  font-weight: 600;
+}
+
+table.plain td.num {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+}
+
+.scroll-x {
+  overflow-x: auto;
+}
+
+/* --------------------------------------------------------------- utilities */
+
+.dim {
+  color: var(--muted);
+}
+
+.faint {
+  color: var(--faint);
+}
+
+.glow {
+  color: var(--glow);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pulse {
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+
+    50% {
+      opacity: 0.35;
+    }
+  }
+}
