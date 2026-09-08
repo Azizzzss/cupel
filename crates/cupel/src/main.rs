@@ -14,6 +14,7 @@ use std::time::Duration;
 mod contracts;
 mod lab;
 mod network;
+mod web;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -54,6 +55,10 @@ const ENGINE_URL: &str = "http://127.0.0.1:8551";
 const GATEWAY_ADDR: &str = "127.0.0.1:8545";
 /// The port half of the above, so `--bind` can choose the interface.
 const GATEWAY_PORT: u16 = 8545;
+/// The control room. Next to the gateway so it is obviously related, and not
+/// on it: one is JSON-RPC for tools, the other is a page for a person.
+const CONTROL_ROOM_PORT: u16 = 8544;
+const CONTROL_ROOM_URL: &str = "http://127.0.0.1:8544";
 const GATEWAY_URL: &str = "http://127.0.0.1:8545";
 /// The signing service. 8550 is the port Clef used to hold, which is where
 /// anyone looking for a signer will think to look.
@@ -260,7 +265,7 @@ async fn up(root: &Path, block_time: u64, keep: bool, listen: &str) -> Result<()
     // `--wait` only proves the container is healthy, not that the RPC is
     // answering us over the published port, so confirm that ourselves before
     // claiming the chain is up.
-    let mut head = wait_for_rpc(&producer).await?;
+    let head = wait_for_rpc(&producer).await?;
 
     // The gateway fronts the node on 8545. It runs in this process rather than
     // a container so there is one binary to rebuild while iterating, and so it
@@ -297,13 +302,44 @@ async fn up(root: &Path, block_time: u64, keep: bool, listen: &str) -> Result<()
     let signer_listener = bind(SIGNER_ADDR, "signer").await?;
     let signing = tokio::spawn(cupel_signer::serve_on(Arc::clone(&signer), signer_listener));
 
-    banner(&head, block_time, &gateway_url);
+    // The control room serves the built interface and the one endpoint the
+    // browser cannot cover for itself. The head is shared with the production
+    // loop behind a lock so a block asked for in the browser and a block the
+    // loop was about to make cannot build on the same parent.
+    let shared_head = Arc::new(tokio::sync::Mutex::new(head.clone()));
+    let narrator = Arc::new(Producer::new(Config {
+        engine_url: ENGINE_URL.to_string(),
+        rpc_url: NODE_RPC_URL.to_string(),
+        jwt_secret: secret,
+        fee_recipient: DEV_ACCOUNTS[0].0.to_string(),
+        block_time: Duration::from_secs(block_time),
+        // The point of this one: it keeps a copy of what it sent, so a
+        // walkthrough can show the sequence rather than describe it.
+        record_exchanges: true,
+        ..Config::default()
+    }));
+    let control_addr = format!("{listen}:{CONTROL_ROOM_PORT}");
+    let control_listener = web::bind(&control_addr).await?;
+    let control_url = match listen {
+        "127.0.0.1" | "0.0.0.0" | "localhost" => CONTROL_ROOM_URL.to_string(),
+        other => format!("http://{other}:{CONTROL_ROOM_PORT}"),
+    };
+    let control = tokio::spawn(web::serve_on(
+        control_listener,
+        web::Control {
+            narrator,
+            head: Arc::clone(&shared_head),
+        },
+    ));
 
-    let result = produce_until_interrupted(&producer, &mut head).await;
+    banner(&head, block_time, &gateway_url, &control_url);
+
+    let result = produce_until_interrupted(&producer, &shared_head).await;
 
     serving.abort();
     probing.abort();
     signing.abort();
+    control.abort();
 
     if keep {
         println!("\ncupel: leaving the container running (--keep)");
@@ -321,7 +357,10 @@ async fn up(root: &Path, block_time: u64, keep: bool, listen: &str) -> Result<()
 /// answering with a clear error instead of a refused connection — and killing
 /// the whole process because one block could not be built would take the
 /// gateway down with it.
-async fn produce_until_interrupted(producer: &Producer, head: &mut Head) -> Result<()> {
+async fn produce_until_interrupted(
+    producer: &Producer,
+    head: &Arc<tokio::sync::Mutex<Head>>,
+) -> Result<()> {
     let mut ticker = tokio::time::interval(producer.config().block_time);
     // Blocks are produced on a schedule; falling behind should not cause a
     // burst of catch-up blocks with near-identical timestamps.
@@ -331,7 +370,8 @@ async fn produce_until_interrupted(producer: &Producer, head: &mut Head) -> Resu
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                match producer.produce_block(head).await {
+                let mut head = head.lock().await;
+                match producer.produce_block(&head).await {
                     Ok(block) => {
                         if stalled > 0 {
                             println!(
@@ -531,11 +571,12 @@ async fn compose_file(root: &Path, file: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn banner(head: &Head, block_time: u64, gateway_url: &str) {
+fn banner(head: &Head, block_time: u64, gateway_url: &str, control_url: &str) {
     println!();
     println!("  Cupel v{}", env!("CARGO_PKG_VERSION"));
     println!("  ---------------------------------------------------");
     println!("  RPC          {gateway_url}");
+    println!("  Control room {control_url}");
     println!("  Node         {NODE_RPC_URL} (behind the gateway)");
     println!("  Metrics      {GATEWAY_URL}/metrics");
     println!("  Signer       {SIGNER_URL}  (policy at /policy, decisions at /audit)");

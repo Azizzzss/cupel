@@ -25,7 +25,9 @@ contracts/broadcast/
 data/
 *.db
 \n
-# The control room's dependencies and build output. `dist` is committed once the
-# binary embeds it; until then it is a build artefact like any other.
+# The control room's dependencies. `ui/dist` is deliberately *not* ignored: it
+# is compiled into the binary, so committing it is what lets `cargo build`
+# produce a working control room without a JavaScript toolchain — the same
+# reason the contracts' bytecode is committed. CI rebuilds it and fails on a
+# difference, so it cannot go stale unnoticed.
 ui/node_modules/
-ui/dist/

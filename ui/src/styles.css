@@ -324,3 +324,103 @@ table.plain td.num {
     }
   }
 }
+
+/* ------------------------------------------------------------- walkthrough */
+
+.button {
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--glow);
+  color: var(--glow);
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+ol.steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.step {
+  counter-increment: step;
+  border-left: 2px solid var(--rule);
+  padding: 0 0 0 0.9rem;
+  position: relative;
+}
+
+.step::before {
+  content: counter(step);
+  position: absolute;
+  left: -0.72rem;
+  top: 0.05rem;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  color: var(--glow);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  display: grid;
+  place-items: center;
+}
+
+.step-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.step-title {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.step-method {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--glow);
+  margin-top: 0.1rem;
+}
+
+.step-text {
+  margin: 0.4rem 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  max-width: 68ch;
+}
+
+.step summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+pre.wire {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem 0.9rem;
+  background: var(--surface-2);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import { blockByNumber, executionHead, type ExecutionHead } from '../api/chain'
 import { usePoll } from '../usePoll'
 
@@ -33,19 +34,21 @@ export function BlockFeed({ rpc }: { rpc: string }) {
 
     if (!backfilling.current) {
       backfilling.current = true
-      const wanted: number[] = []
-      for (let n = latest.number; n > Math.max(-1, latest.number - KEEP); n -= 1) {
-        wanted.push(n)
-      }
-      void Promise.all(wanted.map((n) => blockByNumber(rpc, n))).then((answers) => {
-        setBlocks((current) =>
-          merge(current, answers.flatMap((a) => (a.ok ? [a.value] : []))),
-        )
-      })
+      void fill(rpc, latest.number - KEEP + 1, latest.number, setBlocks)
       return
     }
 
-    setBlocks((current) => merge(current, [latest]))
+    // Poll every 1.5s against a chain making a block every second and some
+    // blocks are simply never the head when asked. Adding only what the poll
+    // returned leaves 590, 588, 586 — which reads as a chain missing blocks
+    // rather than a reader missing them. Fetch what was skipped.
+    setBlocks((current) => {
+      const newest = current[0]?.number ?? latest.number
+      if (latest.number - newest > 1) {
+        void fill(rpc, newest + 1, latest.number - 1, setBlocks)
+      }
+      return merge(current, [latest])
+    })
   }, [head, rpc])
 
   return (
@@ -91,6 +94,23 @@ export function BlockFeed({ rpc }: { rpc: string }) {
       </div>
     </section>
   )
+}
+
+/** Fetch an inclusive range of blocks and fold them in. */
+async function fill(
+  rpc: string,
+  from: number,
+  to: number,
+  set: Dispatch<SetStateAction<ExecutionHead[]>>,
+) {
+  const wanted: number[] = []
+  // Capped: a page left open while a chain runs away, or reopened against a
+  // much longer chain, should not ask for thousands of blocks at once.
+  for (let n = Math.max(0, to - KEEP + 1 > from ? to - KEEP + 1 : from); n <= to; n += 1) {
+    wanted.push(n)
+  }
+  const answers = await Promise.all(wanted.map((n) => blockByNumber(rpc, n)))
+  set((current) => merge(current, answers.flatMap((a) => (a.ok ? [a.value] : []))))
 }
 
 /**

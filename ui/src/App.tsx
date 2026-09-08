@@ -3,7 +3,17 @@ import { Agreement } from './components/Agreement'
 import { BlockFeed } from './components/BlockFeed'
 import { Gateway } from './components/Gateway'
 import { SlotClock } from './components/SlotClock'
+import { Walkthrough } from './components/Walkthrough'
 import { usePoll } from './usePoll'
+
+/**
+ * Where the control room's own API lives.
+ *
+ * Empty when this page is served by the `cupel` binary, because then it is the
+ * same origin. During `npm run dev` the page comes from Vite and the API does
+ * not, so it needs naming.
+ */
+const CONTROL = window.location.port === '5173' ? 'http://127.0.0.1:8544' : ''
 
 export default function App() {
   // Which mode is running is itself polled, so bringing a devnet up in another
@@ -62,6 +72,7 @@ function NetworkView() {
         <BlockFeed key={NETWORK[0].rpc} rpc={NETWORK[0].rpc} />
       </div>
       <Gateway />
+      <Walkthrough controlUrl={CONTROL} />
     </>
   )
 }
@@ -73,6 +84,7 @@ function LabView() {
         <BlockFeed key={LAB[0].rpc} rpc={LAB[0].rpc} />
         <Gateway />
       </div>
+      <Walkthrough controlUrl={CONTROL} />
       <section className="panel">
         <div className="panel-head">
           <h2>No consensus here, and that is the trade</h2>
