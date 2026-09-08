@@ -14,6 +14,11 @@ gives you a **real network**: three execution clients paired with Lighthouse,
 Prysm and Teku, sixty-four validators, a discovery bootnode, and a chain that
 genuinely reaches finality. Same contracts, same addresses, running on a laptop.
 
+Both open a **control room** in the browser: the head of the chain, the blocks
+as they arrive, whether the three clients agree on what is final — and a button
+that makes a block and shows you the four calls that made it, with the real
+requests, the real answers and the real timings.
+
 > A **cupel** is the porous bone-ash vessel used in fire assay. You heat an alloy
 > inside it; the base metals oxidise into the walls, and what remains is the pure
 > metal. It is the tool for finding out what something is really made of.
@@ -74,6 +79,7 @@ cargo run -p cupel --release
   Cupel v0.6.0
   ---------------------------------------------------
   RPC          http://127.0.0.1:8545
+  Control room http://127.0.0.1:8544
   Node         http://127.0.0.1:8546 (behind the gateway)
   Metrics      http://127.0.0.1:8545/metrics
   Signer       http://127.0.0.1:8550  (policy at /policy, decisions at /audit)
@@ -101,6 +107,61 @@ cast send 0x00000000000000000000000000000000c0de0020 'mint(address,uint256)' $YO
 ```
 
 MetaMask connects at chain id **31337**; import any key above.
+
+---
+
+## The control room
+
+The banner prints a second address. Open it.
+
+Four panels, every one of them reading from the chain rather than from anything
+this process remembers:
+
+| | |
+|---|---|
+| **Head** | number, hash, gas used, and how long ago it arrived |
+| **Blocks** | the last twelve as they land — backfilled on open, and gaps refetched, because polling every 1.5s against a chain making a block a second misses some and a reader's gaps must not look like a chain's |
+| **Gateway** | how many upstreams are answering, and what the cache and the rate limiter are doing |
+| **Agreement** | in network mode, what Lighthouse, Prysm and Teku each call the head, the justified epoch and the finalised one |
+
+The agreement panel distinguishes four outcomes, not two. A client that cannot
+be reached, a chain that has not finalised anything yet, a client that is merely
+*behind* by some number of epochs, and a client that actually **disagrees** at
+the same epoch are different situations, and only the last one is alarming.
+Collapsing them into "agree / disagree" is how a syncing node gets reported as a
+consensus failure.
+
+Then there is a button that makes a block. It runs the same four Engine API
+calls the producer runs once a second, with a copy kept of everything sent and
+received, and lays them out in order with what each one is for:
+
+```
+  1  engine_forkchoiceUpdatedV3   2.1ms   payloadId 0x03a35bad9e60fdc1
+  2  engine_getPayloadV3          1.4ms   block 1001, 0 txs
+  3  engine_newPayloadV3          0.8ms   VALID
+  4  engine_forkchoiceUpdatedV3   0.3ms   VALID
+```
+
+`forkchoiceUpdated` appears twice and the two calls do different jobs — the
+first asks for a block, the last accepts one — so the explanations are keyed by
+method *and* occurrence rather than by position.
+
+Everything on the page except that button is read straight from the clients by
+the browser. The button is the exception: making a block means an authenticated
+call to the Engine API with a shared secret, over a port bound to localhost.
+That is this process's job, so there is exactly one endpoint behind the page,
+`POST /api/produce`, and it holds the head under a lock for the whole four-call
+sequence — each of those calls names the parent, so two producers working from
+one head would have the second building on a block the first had already
+replaced.
+
+The page is React and Vite, built to `ui/dist` and compiled into the binary with
+`rust-embed`. The bundle is committed, which is what lets `cargo build` and all
+four release targets produce a working control room with no JavaScript toolchain
+anywhere near them — the same trade the contracts make by committing bytecode
+into genesis. CI rebuilds it from source on every push and fails if the result
+differs from what is committed, because a build output kept in a repository
+becomes a lie the moment its source moves without it.
 
 ---
 
@@ -167,6 +228,7 @@ from what it describes and nothing catches it.
 | **Contract library** | Annotated ERC-20/Permit, ERC-4626, WETH, deployed in genesis | ✅ |
 | **RPC gateway** | Capability routing, health, failover, caching, metrics | ✅ |
 | **Policy signer** | A held key behind ceilings, allowlists and budgets, with an audit log | ✅ |
+| **Control room** | Live head, block feed, gateway health, client agreement, and an Engine API walkthrough that produces real blocks | ✅ |
 | Execution client | geth | integrated |
 | Consensus clients | Lighthouse, Prysm, Teku — one each, on purpose | integrated |
 | Genesis and keys | ethPandaOps' generator, pinned | integrated |
@@ -533,6 +595,7 @@ hide exactly the kind of difference this mode exists to surface.
 
 | | |
 |---|---|
+| `8544` | **the control room** |
 | `8545` | **the gateway** — the only RPC anything should point at |
 | `8546` | geth's own JSON-RPC, behind it |
 | `8550` | the policy signer |
@@ -630,6 +693,8 @@ and being able to query the past is worth a great deal in a teaching tool.
 | **C** | RPC gateway and monitoring | ✅ `v0.3.0` |
 | **D** | Policy signing and audit log | ✅ `v0.4.0` |
 | **E** | Multi-client network — three consensus clients, a bootnode, real finality | ✅ `v0.5.1` |
+| | Walkthroughs — four numbered lessons that do real work and narrate it | ✅ `v0.6.0` |
+| | Control room — the same machinery, watched in a browser | ✅ unreleased |
 | **F** | Chainlink oracle — a contract reading an off-chain price | next |
 | **G** | Blockscout and a faucet | planned |
 
@@ -650,6 +715,8 @@ crates/
   gateway/     capability-aware JSON-RPC gateway
   signer/      policy engine, audit log, signing service
 contracts/     Foundry — the annotated reference library
+ui/            the control room — React and Vite
+               dist/ is committed; it is compiled into the binary
 compose/       lab.yml (one node), network.yml (nine), observe.yml (monitoring)
 config/        genesis, Prometheus, Grafana provisioning
                network/ is generated by `cupel network init`, never committed

@@ -9,7 +9,68 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- **A control room.** `cupel up` and `cupel network up` now print a second
+  address alongside the RPC: a page showing the head, the last twelve blocks as
+  they arrive, what the gateway's upstreams are doing, and — in network mode —
+  what each of the three consensus clients calls the head, the justified epoch
+  and the finalised one.
+
+  The agreement panel reports four outcomes rather than two, because a client
+  that is unreachable, one on a chain that has not finalised yet, one that is
+  merely behind by some epochs, and one that genuinely disagrees at the same
+  epoch are different situations and only the last is alarming.
+
+  It also produces blocks. The button runs the same four Engine API calls the
+  producer runs once a second, with a copy kept of every request and response,
+  and shows them in order with what each is for — keyed by method *and*
+  occurrence, since `forkchoiceUpdated` appears twice and the two calls do
+  different jobs.
+
+  Everything else on the page is read straight from the clients by the browser.
+  Producing a block is the exception: it needs an authenticated call to a port
+  bound to localhost, so there is one endpoint, `POST /api/produce`, holding the
+  head under a lock for the whole sequence — each call names the parent, so two
+  producers sharing a head would have the second build on a block the first had
+  already replaced.
+
+  The page is compiled into the binary with `rust-embed`, so a release carries
+  its own front end and running Cupel never needs a JavaScript toolchain.
+
 ### Fixed
+
+- **No browser could call the gateway.** A JSON-RPC request carries
+  `content-type: application/json`, which is never a simple request, so a
+  browser asks permission first — and the route accepted only POST, so the
+  preflight got `405 Method Not Allowed` and the real call was never sent. Every
+  browser client had been unable to reach the gateway since it was written,
+  while `cast` and `forge` worked perfectly, because neither of them asks
+  permission. The README had been recommending `viem` against it the whole time.
+
+  Separately, the `Access-Control-Allow-Origin` header was set by the JSON-RPC
+  handler alone, so `/health` and `/metrics` returned correct bodies that
+  browsers dropped unread. It is a response layer now — one place, every route,
+  nothing for a third handler to forget. The test for it needed the router
+  extracted first: the test module had been building its own copy of the routes,
+  which is exactly how a layer goes missing from the real one while the suite
+  stays green.
+
+- **Teku sent no CORS headers either.** `--rest-api-host-allowlist` is a Host
+  header allowlist and not the same idea; without `--rest-api-cors-origins` Teku
+  answers `curl` perfectly and a page throws the answer away. Three clients,
+  three spellings of one concept: Lighthouse has `--http-allow-origin`, Prysm
+  `--http-cors-domain`, Teku this.
+
+- **The committed bundle was never committed.** `ui/dist` is compiled into the
+  binary, and a bare `dist/` in the root ignore file — plus Vite's scaffolded
+  `ui/.gitignore`, either alone sufficient — kept it out of the repository while
+  a comment directly above the rule explained why it was in. Nothing failed
+  locally, because the working tree had the files; the first machine to find out
+  would have been CI, on all four jobs at once, with `#[derive(RustEmbed)] folder
+  '.../ui/dist' does not exist`. There is a `ui` job now that lints, typechecks,
+  rebuilds the bundle from source and fails if it differs from what is
+  committed — the same check genesis and the diagrams already get.
 
 - **The walkthrough about slots stated the slot time from memory.** Walkthrough
   3 reads the head slot, the epoch and the proposer duties off the running
