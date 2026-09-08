@@ -353,29 +353,50 @@ pub async fn serve_on(
     gateway: Arc<Gateway>,
     listener: tokio::net::TcpListener,
 ) -> std::io::Result<()> {
-    let app = Router::new()
-        .route("/", post(rpc))
-        .route("/metrics", get(prometheus))
-        .route("/health", get(health))
-        .with_state(gateway);
+    let app = router(gateway);
 
     axum::serve(listener, app).await
+}
+
+/// Every route this gateway answers.
+///
+/// Built here rather than inline so the tests exercise the same router that
+/// runs. A test that assembles its own copy passes while the real one is
+/// missing a layer, which is exactly how the CORS header came to be on one
+/// route out of three with nothing failing.
+pub fn router(gateway: Arc<Gateway>) -> Router {
+    Router::new()
+        // `options` alongside `post`, and it is not decoration. A JSON-RPC call
+        // carries `content-type: application/json`, which is never a simple
+        // request, so a browser sends a preflight first and refuses to send the
+        // real one unless that is answered. Routing only POST here returned
+        // `405 Method Not Allowed` to the preflight, and the
+        // Access-Control-Allow-Origin on the answer below was never reached.
+        //
+        // The effect was that no page could call this gateway at all — viem,
+        // ethers, a fetch from the console, the control room — while `cast` and
+        // `forge` worked perfectly, because neither of them is a browser.
+        .route("/", post(rpc).options(preflight))
+        .route("/metrics", get(prometheus))
+        .route("/health", get(health).options(preflight))
+        // Applied to every response rather than added by each handler. It was
+        // set on the JSON-RPC answer and on nothing else, so `/health` returned
+        // a correct body that browsers dropped unread — the control room showed
+        // the gateway as not running while it was answering `curl` perfectly.
+        // A header that three handlers each have to remember is a header two of
+        // them will forget.
+        .layer(axum::middleware::map_response(allow_any_origin))
+        .with_state(gateway)
 }
 
 async fn rpc(State(gateway): State<Arc<Gateway>>, body: String) -> Response {
     let answer = gateway.handle(&body).await;
     (
         StatusCode::OK,
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/json"),
-            ),
-            (
-                header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                HeaderValue::from_static("*"),
-            ),
-        ],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        )],
         answer.to_string(),
     )
         .into_response()
@@ -392,6 +413,35 @@ async fn prometheus(State(gateway): State<Arc<Gateway>>) -> Response {
         rendered,
     )
         .into_response()
+}
+
+/// Let any page read any answer this gateway gives.
+///
+/// A lab gateway on localhost in front of a throwaway chain, where the
+/// alternative is that nothing in a browser can use it at all.
+async fn allow_any_origin(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    response
+}
+
+/// Answer a CORS preflight.
+///
+/// Permissive on purpose: this is a lab gateway bound to localhost in front of
+/// a throwaway chain, and the alternative is that nothing in a browser can
+/// reach it.
+async fn preflight() -> impl IntoResponse {
+    (
+        StatusCode::NO_CONTENT,
+        [
+            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+            (header::ACCESS_CONTROL_ALLOW_METHODS, "POST, GET, OPTIONS"),
+            (header::ACCESS_CONTROL_ALLOW_HEADERS, "content-type"),
+            (header::ACCESS_CONTROL_MAX_AGE, "86400"),
+        ],
+    )
 }
 
 async fn health(State(gateway): State<Arc<Gateway>>) -> Response {
@@ -416,6 +466,89 @@ async fn health(State(gateway): State<Arc<Gateway>>) -> Response {
         StatusCode::OK
     };
     (code, axum::Json(body)).into_response()
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    fn app() -> Router {
+        router(Arc::new(Gateway::new(
+            Config::default(),
+            vec![Upstream::new("test", "http://127.0.0.1:1")],
+        )))
+    }
+
+    /// The check that would have caught this. A JSON-RPC POST is never a simple
+    /// request, so a browser asks permission first — and for as long as this
+    /// route accepted only POST, the answer was 405 and no page could reach the
+    /// gateway at all. `cast` and `forge` never noticed, because neither of
+    /// them asks.
+    /// Every route, not just the one somebody remembered.
+    #[tokio::test]
+    async fn every_answer_is_readable_by_a_page() {
+        for path in ["/health", "/metrics"] {
+            let response = app()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header("origin", "http://127.0.0.1:8544")
+                        .body(Body::empty())
+                        .expect("a request"),
+                )
+                .await
+                .expect("a response");
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                    .map(|v| v.as_bytes()),
+                Some(&b"*"[..]),
+                "{path} answers, and a browser would throw the answer away"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_preflight_is_answered_rather_than_refused() {
+        let response = app()
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/")
+                    .header("origin", "http://127.0.0.1:8544")
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", "content-type")
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("a response");
+
+        assert_eq!(
+            response.status(),
+            StatusCode::NO_CONTENT,
+            "405 here means every browser refuses to send the call that follows"
+        );
+        let headers = response.headers();
+        assert_eq!(
+            headers
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .map(|v| v.as_bytes()),
+            Some(&b"*"[..]),
+        );
+        // Naming the header matters as much as the method: the preflight asks
+        // about `content-type`, and a reply that does not permit it fails.
+        let allowed = headers
+            .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        assert!(allowed.contains("content-type"), "got {allowed:?}");
+    }
 }
 
 #[cfg(test)]
