@@ -463,6 +463,20 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
     let serving = tokio::spawn(cupel_gateway::serve_on(Arc::clone(&gateway), listener));
     let probing = tokio::spawn(Arc::clone(&gateway).probe_forever());
 
+    // The same control room lab mode serves, on the same port, from the same
+    // binary. It was reachable only from `cupel up` before, which made watching
+    // a devnet in a browser require lab mode running as well — and lab mode
+    // holds this gateway's port, so the two could never both start. Whichever
+    // mode is running now serves the page, and the page works out which one it
+    // is by asking the clients rather than by being told.
+    //
+    // With no producer: see `web::Control`.
+    let control_listener = crate::web::bind(crate::CONTROL_ROOM_ADDR).await?;
+    let control = tokio::spawn(crate::web::serve_on(
+        control_listener,
+        crate::web::Control { producing: None },
+    ));
+
     banner(true);
     tokio::signal::ctrl_c().await.ok();
     println!();
@@ -470,6 +484,7 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
 
     serving.abort();
     probing.abort();
+    control.abort();
     Ok(())
 }
 
@@ -843,6 +858,7 @@ fn banner(gateway: bool) {
             "  RPC          {}  (the gateway, across all three)",
             crate::GATEWAY_URL
         );
+        println!("  Control room {}", crate::CONTROL_ROOM_URL);
         println!();
     }
     for node in NODES {

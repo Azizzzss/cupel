@@ -39,6 +39,19 @@ struct Assets;
 /// What the page needs from this process, rather than from the chain.
 #[derive(Clone)]
 pub(crate) struct Control {
+    /// What answers the walkthrough — in lab mode.
+    ///
+    /// `None` in network mode, where there is nothing for it to be. Blocks
+    /// there come from sixty-four validators proposing and attesting on a
+    /// schedule no one controls, and an Engine API call from this process
+    /// would not join that; it would start a second chain beside it. So the
+    /// endpoint says that, and the page does not offer the button.
+    pub(crate) producing: Option<Producing>,
+}
+
+/// A producer kept for narrating, and the head it works from.
+#[derive(Clone)]
+pub(crate) struct Producing {
     /// A producer with exchange recording on. Separate from the one driving the
     /// chain: recording copies every request and response, and the loop that
     /// runs once a second should not pay for that.
@@ -80,8 +93,15 @@ pub(crate) async fn bind(address: &str) -> Result<TcpListener> {
 /// the same head would have the second one building on a block the first had
 /// already replaced.
 async fn produce(State(control): State<Control>) -> Response {
-    let mut head = control.head.lock().await;
-    match control.narrator.produce_block(&head).await {
+    let Some(producing) = control.producing else {
+        return (
+            StatusCode::CONFLICT,
+            axum::Json(json!({ "error": NO_PRODUCER })),
+        )
+            .into_response();
+    };
+    let mut head = producing.head.lock().await;
+    match producing.narrator.produce_block(&head).await {
         Ok(block) => {
             *head = block.head.clone();
             let exchanges: Vec<Value> = block
@@ -115,6 +135,16 @@ async fn produce(State(control): State<Control>) -> Response {
             .into_response(),
     }
 }
+
+/// Why there is no button in network mode.
+///
+/// A 409 rather than a 404: the route exists and the request was understood,
+/// it is the state of this process that makes it wrong.
+const NO_PRODUCER: &str = "This process is fronting a devnet, and a devnet \
+makes its own blocks — sixty-four validators propose and attest on a schedule \
+nobody here controls. Producing one from the host would not add to that chain, \
+it would start another. `cupel lab 3` and `cupel lab 4` walk through how the \
+validators do it instead.";
 
 /// Serve a compiled-in file, falling back to the page itself.
 ///
@@ -163,6 +193,25 @@ mod tests {
         assert!(
             Assets::get("index.html").is_some(),
             "ui/dist/index.html was not embedded — run `npm --prefix ui run build`"
+        );
+    }
+
+    #[tokio::test]
+    async fn network_mode_refuses_to_produce_and_says_why() {
+        // The button is hidden in network mode, so this is what a stale page or
+        // a curl gets. It must not be a 500, and it must not quietly succeed by
+        // building a block beside a chain sixty-four validators are agreeing
+        // on — which is what an `unwrap` here would have done.
+        let response = produce(State(Control { producing: None })).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("a body");
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("validators"),
+            "the refusal should explain itself, got: {text}"
         );
     }
 

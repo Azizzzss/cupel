@@ -58,6 +58,7 @@ const GATEWAY_PORT: u16 = 8545;
 /// The control room. Next to the gateway so it is obviously related, and not
 /// on it: one is JSON-RPC for tools, the other is a page for a person.
 const CONTROL_ROOM_PORT: u16 = 8544;
+const CONTROL_ROOM_ADDR: &str = "127.0.0.1:8544";
 const CONTROL_ROOM_URL: &str = "http://127.0.0.1:8544";
 const GATEWAY_URL: &str = "http://127.0.0.1:8545";
 /// The signing service. 8550 is the port Clef used to hold, which is where
@@ -327,8 +328,10 @@ async fn up(root: &Path, block_time: u64, keep: bool, listen: &str) -> Result<()
     let control = tokio::spawn(web::serve_on(
         control_listener,
         web::Control {
-            narrator,
-            head: Arc::clone(&shared_head),
+            producing: Some(web::Producing {
+                narrator,
+                head: Arc::clone(&shared_head),
+            }),
         },
     ));
 

@@ -72,8 +72,42 @@ function NetworkView() {
         <BlockFeed key={NETWORK[0].rpc} rpc={NETWORK[0].rpc} />
       </div>
       <Gateway />
-      <Walkthrough controlUrl={CONTROL} />
+      <NobodyInCharge />
     </>
+  )
+}
+
+/**
+ * Network mode's counterpart to lab mode's closing panel.
+ *
+ * Lab mode ends by saying what it gave up to start in eight seconds. This ends
+ * by saying what replaced the thing lab mode has: there is no producer here to
+ * ask for a block, so there is no button, and the reason is the interesting
+ * part rather than an apology for a missing control.
+ */
+function NobodyInCharge() {
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>Nobody here is asked to make a block</h2>
+      </div>
+      <div className="panel-body">
+        <p className="dim" style={{ margin: 0, fontSize: '0.88rem' }}>
+          In lab mode a producer on the host asks one client for a block, four
+          authenticated calls at a time, and the button above runs that
+          sequence. There is no such caller here. Sixty-four validators split
+          across these three nodes propose and attest on a schedule nobody
+          controls, and the chain above is whatever they agreed on — which is
+          why it can stop finalising, and why that is worth watching.
+        </p>
+        <p className="panel-note" style={{ margin: 0 }}>
+          For the machinery underneath, run{' '}
+          <span className="mono">cupel lab 3</span> for slots, epochs and
+          finality, or <span className="mono">cupel lab 4</span> for what each
+          of the three clients believes.
+        </p>
+      </div>
+    </section>
   )
 }
 
