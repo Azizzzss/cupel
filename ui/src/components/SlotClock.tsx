@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
-import { NETWORK, beaconState, type BeaconState } from '../api/chain'
+import { NETWORK, beaconState, type Answer, type BeaconState } from '../api/chain'
 import { mmss } from '../lib/format'
 import { finalityNote, slotView, timing } from '../lib/slots'
-import { useNow, usePoll } from '../usePoll'
+import { useFreshness, useNow, usePoll } from '../usePoll'
 import { Field } from './Field'
+import { StaleNote } from './Stale'
 
 interface Reading {
   node: string
@@ -18,14 +19,17 @@ interface Reading {
  * node1 — the demonstration this lab asks for — left the clock claiming no
  * beacon node was answering while two of them were.
  */
-async function firstAnswering(): Promise<Reading | undefined> {
+async function firstAnswering(): Promise<Answer<Reading>> {
   for (const node of NETWORK) {
     const answer = await beaconState(node.beacon!)
     if (answer.ok) {
-      return { node: node.name, consensus: node.consensus ?? '', state: answer.value }
+      return {
+        ok: true,
+        value: { node: node.name, consensus: node.consensus ?? '', state: answer.value },
+      }
     }
   }
-  return undefined
+  return { ok: false, reason: 'unreachable' }
 }
 
 /**
@@ -38,8 +42,10 @@ async function firstAnswering(): Promise<Reading | undefined> {
  * quietly wrong. Asking costs one request.
  */
 export function SlotClock() {
-  const { data } = usePoll(firstAnswering, 4000, [])
+  const reading = usePoll(firstAnswering, 4000, [])
+  const freshness = useFreshness(reading)
   const now = useNow(500)
+  const data = reading.value
 
   if (!data) {
     return (
@@ -52,6 +58,10 @@ export function SlotClock() {
   const { headSlot, justified, finalized } = data.state
   const via = `via ${data.consensus} (${data.node})`
   const t = timing(data.state)
+  // The clock rows keep ticking whatever the client says: they are wall-clock
+  // arithmetic and stay true. What the chain reported — the head, the
+  // justified and finalised epochs — is what goes grey when it ages.
+  const stale = freshness.kind === 'stale'
 
   if (!t) {
     return (
@@ -80,9 +90,16 @@ export function SlotClock() {
           label="Head"
           value={`${headSlot}`}
           note={view.behind <= 1 ? 'keeping time' : `${view.behind} slots behind the clock`}
+          stale={stale}
         />
-        <Field label="Justified epoch" value={`${justified}`} />
-        <Field label="Finalised epoch" value={`${finalized}`} note={finalityNote(view, finalized)} />
+        <Field label="Justified epoch" value={`${justified}`} stale={stale} />
+        <Field
+          label="Finalised epoch"
+          value={`${finalized}`}
+          note={finalityNote(view, finalized)}
+          stale={stale}
+        />
+        <StaleNote freshness={freshness} />
         <p className="panel-note" style={{ marginTop: '0.5rem' }}>
           A slot is a fixed opportunity for one validator to propose; it passes
           whether or not they do. Finality trails the head by roughly two

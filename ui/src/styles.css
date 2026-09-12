@@ -308,6 +308,40 @@ table.plain td.num {
   flex: 1;
 }
 
+/* ------------------------------------------------------------- staleness */
+
+/* Numbers that may no longer be true stay on the page and stop looking
+   current. The note under them says when they were last confirmed. */
+.stale {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+  transition: opacity 0.3s ease;
+}
+
+.stale-note {
+  margin: 0;
+  font-size: 0.76rem;
+  color: var(--litharge);
+}
+
+/* A tiny word about how the numbers arrive. */
+.tag {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--surface-2);
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.tag-live {
+  color: var(--bead);
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .pulse {
     animation: pulse 1.6s ease-in-out infinite;

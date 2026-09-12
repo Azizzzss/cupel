@@ -3,7 +3,9 @@ import type { Dispatch, SetStateAction } from 'react'
 import { blockByNumber, executionHead, type ExecutionHead } from '../api/chain'
 import { merge } from '../lib/blocks'
 import { age, shortHash } from '../lib/format'
-import { useNow, usePoll } from '../usePoll'
+import { staleClass } from '../lib/freshness'
+import { useFreshness, useNow, usePoll } from '../usePoll'
+import { StaleNote } from './Stale'
 
 const KEEP = 12
 
@@ -18,11 +20,13 @@ export function BlockFeed({ rpc }: { rpc: string }) {
   const [blocks, setBlocks] = useState<ExecutionHead[]>([])
   // Whether the one-time backfill has been started. Kept in a ref because it
   // must not cause a render, and read and written only in effects — never
-  // inside a state updater. See `merge` below.
+  // inside a state updater. See `merge` in lib/blocks.
   const backfilling = useRef(false)
 
-  const { data: head } = usePoll(() => executionHead(rpc), 1500, [rpc])
+  const head = usePoll(() => executionHead(rpc), 1500, [rpc])
+  const freshness = useFreshness(head)
   const now = useNow(1000)
+  const latest = head.value
 
   // Pointing this at a different chain has to clear the list — the same block
   // number then means a different block, and keeping the rows would mix two
@@ -32,8 +36,7 @@ export function BlockFeed({ rpc }: { rpc: string }) {
   // stale list once on the way past.
 
   useEffect(() => {
-    if (!head?.ok) return
-    const latest = head.value
+    if (!latest) return
 
     if (!backfilling.current) {
       backfilling.current = true
@@ -52,7 +55,7 @@ export function BlockFeed({ rpc }: { rpc: string }) {
       }
       return merge(current, [latest], KEEP)
     })
-  }, [head, rpc])
+  }, [latest, rpc])
 
   return (
     <section className="panel">
@@ -60,7 +63,7 @@ export function BlockFeed({ rpc }: { rpc: string }) {
         <h2>Blocks, as they arrive</h2>
         <span className="panel-note">newest first</span>
       </div>
-      <div className="panel-body scroll-x">
+      <div className={staleClass(freshness, 'panel-body scroll-x')}>
         {blocks.length === 0 ? (
           <span className="faint pulse">waiting for a block…</span>
         ) : (
@@ -92,6 +95,7 @@ export function BlockFeed({ rpc }: { rpc: string }) {
             </tbody>
           </table>
         )}
+        <StaleNote freshness={freshness} />
       </div>
     </section>
   )

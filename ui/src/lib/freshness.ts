@@ -53,6 +53,11 @@ export function freshness(
     : { kind: 'fresh', ageMs }
 }
 
+/** The class a panel body wears while its numbers are old. */
+export function staleClass(f: Freshness, base = 'panel-body'): string {
+  return f.kind === 'stale' ? `${base} stale` : base
+}
+
 /**
  * The worst of several sources, for a summary that must not flatter.
  *

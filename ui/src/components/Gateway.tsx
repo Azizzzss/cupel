@@ -1,5 +1,7 @@
 import { gatewayHealth } from '../api/chain'
-import { usePoll } from '../usePoll'
+import { staleClass } from '../lib/freshness'
+import { useFreshness, usePoll } from '../usePoll'
+import { StaleNote } from './Stale'
 
 /**
  * What the gateway is doing with its upstreams.
@@ -9,9 +11,10 @@ import { usePoll } from '../usePoll'
  * requests keep being answered by whoever is left.
  */
 export function Gateway({ mode }: { mode: 'lab' | 'network' }) {
-  const { data } = usePoll(() => gatewayHealth(), 2000, [])
+  const health = usePoll(() => gatewayHealth(), 2000, [])
+  const freshness = useFreshness(health)
 
-  if (!data?.ok) {
+  if (!health.value) {
     return (
       <section className="panel">
         <div className="panel-head">
@@ -27,7 +30,7 @@ export function Gateway({ mode }: { mode: 'lab' | 'network' }) {
     )
   }
 
-  const { healthy, total, upstreams } = data.value
+  const { healthy, total, upstreams } = health.value
   const kind = healthy === 0 ? 'pill-wrong' : healthy < total ? 'pill-working' : 'pill-agree'
 
   return (
@@ -39,7 +42,7 @@ export function Gateway({ mode }: { mode: 'lab' | 'network' }) {
           {healthy} of {total} answering
         </span>
       </div>
-      <div className="panel-body scroll-x">
+      <div className={staleClass(freshness, 'panel-body scroll-x')}>
         <table className="plain">
           <thead>
             <tr>
@@ -64,6 +67,7 @@ export function Gateway({ mode }: { mode: 'lab' | 'network' }) {
             ))}
           </tbody>
         </table>
+        <StaleNote freshness={freshness} />
         {mode === 'network' ? (
           <p className="panel-note" style={{ marginTop: '0.7rem' }}>
             Routing resolves capability, then health, then weight. Two consecutive

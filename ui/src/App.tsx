@@ -1,4 +1,12 @@
-import { LAB, NETWORK, VIEWING_LOCALLY, chainId, detectMode, type Mode } from './api/chain'
+import {
+  LAB,
+  NETWORK,
+  VIEWING_LOCALLY,
+  chainId,
+  detectMode,
+  type Answer,
+  type Mode,
+} from './api/chain'
 import { Agreement } from './components/Agreement'
 import { BlockFeed } from './components/BlockFeed'
 import { Gateway } from './components/Gateway'
@@ -7,20 +15,21 @@ import { Walkthrough } from './components/Walkthrough'
 import { usePoll } from './usePoll'
 
 /**
- * Where the control room's own API lives: this origin, always.
+ * Which mode is running, as something the poller can keep.
  *
- * Served by the binary it is the same origin by construction, and under `npm
- * run dev` or `preview` Vite proxies `/api` to the control room. It used to be
- * named explicitly when the port was 5173, which made the request cross-origin
- * — and the control room sends no CORS headers, so a successful produce came
- * back as a failure.
+ * The control room's own API is this origin, always: served by the binary it
+ * is the same origin by construction, and under `npm run dev` or `preview`
+ * Vite proxies `/api` to it. Detection itself never fails — "nothing is
+ * running" is an answer, not an error.
  */
-const CONTROL = ''
+async function currentMode(): Promise<Answer<Mode>> {
+  return { ok: true, value: await detectMode('') }
+}
 
 export default function App() {
   // Which mode is running is itself polled, so bringing a devnet up in another
   // terminal changes this page without anybody reloading it.
-  const { data: mode, loading } = usePoll(() => detectMode(CONTROL), 4000, [])
+  const { value: mode, loading } = usePoll(currentMode, 4000, [])
 
   return (
     <div className="app">
@@ -34,7 +43,7 @@ export default function App() {
 }
 
 function Header({ mode, loading }: { mode: Mode; loading: boolean }) {
-  const { data: id } = usePoll(
+  const { value: id } = usePoll(
     () => chainId(mode === 'network' ? NETWORK[0].rpc : LAB[0].rpc),
     10_000,
     [mode],
@@ -57,7 +66,7 @@ function Header({ mode, loading }: { mode: Mode; loading: boolean }) {
           {mode === 'none' ? 'Nothing is running' : 'Watching the chain'}
         </h1>
         <span className="spacer" />
-        {id?.ok && <span className="panel-note mono">chain id {id.value}</span>}
+        {id !== undefined && <span className="panel-note mono">chain id {id}</span>}
       </div>
       <p className="dim" style={{ fontSize: '0.9rem' }}>
         {label}
@@ -121,7 +130,7 @@ function LabView() {
         <BlockFeed key={LAB[0].rpc} rpc={LAB[0].rpc} />
         <Gateway mode="lab" />
       </div>
-      <Walkthrough controlUrl={CONTROL} />
+      <Walkthrough />
       <section className="panel">
         <div className="panel-head">
           <h2>No consensus here, and that is the trade</h2>

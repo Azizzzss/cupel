@@ -52,7 +52,7 @@ const EXPLAINS: Record<string, { title: string; text: string }[]> = {
   ],
 }
 
-export function Walkthrough({ controlUrl }: { controlUrl: string }) {
+export function Walkthrough() {
   const [state, setState] = useState<
     { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; data: Produced } | { kind: 'failed'; why: string }
   >({ kind: 'idle' })
@@ -60,7 +60,8 @@ export function Walkthrough({ controlUrl }: { controlUrl: string }) {
   const run = async () => {
     setState({ kind: 'running' })
     try {
-      const response = await fetch(`${controlUrl}/api/produce`, { method: 'POST' })
+      // Same origin, always: the binary serves both, and the dev server proxies.
+      const response = await fetch('/api/produce', { method: 'POST' })
       const body = await response.json()
       if (!response.ok) {
         setState({ kind: 'failed', why: body.error ?? `the control room answered ${response.status}` })

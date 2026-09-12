@@ -1,10 +1,17 @@
-import { NETWORK, beaconState, executionHead } from '../api/chain'
+import { NETWORK, beaconState, executionHead, type Answer } from '../api/chain'
 import { shortHash } from '../lib/format'
+import { staleClass } from '../lib/freshness'
 import { verdict, type Row } from '../lib/verdict'
-import { usePoll } from '../usePoll'
+import { useFreshness, usePoll } from '../usePoll'
+import { StaleNote } from './Stale'
 
-async function readAll(): Promise<Row[]> {
-  return Promise.all(
+/**
+ * Every node's answers. An answer only when at least one beacon node spoke:
+ * three silences are not a reading of the chain, and the panel keeps the last
+ * reading it had, greyed, rather than replacing it with three dashes.
+ */
+async function readAll(): Promise<Answer<Row[]>> {
+  const rows = await Promise.all(
     NETWORK.map(async (node) => {
       const [execution, beacon] = await Promise.all([
         executionHead(node.rpc),
@@ -13,10 +20,15 @@ async function readAll(): Promise<Row[]> {
       return { name: node.name, consensus: node.consensus ?? '', execution, beacon }
     }),
   )
+  return rows.some((row) => row.beacon.ok)
+    ? { ok: true, value: rows }
+    : { ok: false, reason: 'unreachable' }
 }
 
 export function Agreement() {
-  const { data: rows } = usePoll(readAll, 2000, [])
+  const answers = usePoll(readAll, 2000, [])
+  const freshness = useFreshness(answers)
+  const rows = answers.value
   if (!rows) {
     return (
       <section className="panel">
@@ -24,7 +36,9 @@ export function Agreement() {
           <h2>Do they agree?</h2>
         </div>
         <div className="panel-body">
-          <span className="faint pulse">asking three clients…</span>
+          <span className="faint pulse">
+            {answers.loading ? 'asking three clients…' : 'no clients reachable'}
+          </span>
         </div>
       </section>
     )
@@ -40,7 +54,7 @@ export function Agreement() {
           {v.text}
         </span>
       </div>
-      <div className="panel-body scroll-x">
+      <div className={staleClass(freshness, 'panel-body scroll-x')}>
         <table className="plain">
           <thead>
             <tr>
@@ -74,6 +88,7 @@ export function Agreement() {
             })}
           </tbody>
         </table>
+        <StaleNote freshness={freshness} />
         <p className="panel-note" style={{ marginTop: '0.7rem' }}>
           Lighthouse, Prysm and Teku are written by different teams in different
           languages. The finalised root is the thing they have to agree on, and
