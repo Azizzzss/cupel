@@ -52,6 +52,9 @@ pub struct Requirements {
     pub trace: bool,
     /// Needs the transaction pool.
     pub tx_pool: bool,
+    /// Refers to state that exists on one node only, so every call about it has
+    /// to reach the same node.
+    pub node_local: bool,
 }
 
 impl Requirements {
@@ -65,6 +68,7 @@ impl Requirements {
             archive: historical,
             trace: method.starts_with("debug_") || method.starts_with("trace_"),
             tx_pool: method.starts_with("txpool_"),
+            node_local: is_node_local(method),
         }
     }
 
@@ -74,6 +78,26 @@ impl Requirements {
             && (!self.trace || capabilities.trace)
             && (!self.tx_pool || capabilities.tx_pool)
     }
+}
+
+/// Methods whose answers depend on state created on one particular node.
+///
+/// A filter is an id handed out by the node that created it and known to no
+/// other. Round-robin sent `eth_newFilter` to one geth and the following
+/// `eth_getFilterChanges` to the next, which had never heard of the id — so on
+/// a perfectly healthy three-node devnet every filter-based subscription, which
+/// is how ethers, viem and web3 libraries watch for events without WebSockets,
+/// failed with "filter not found".
+fn is_node_local(method: &str) -> bool {
+    matches!(
+        method,
+        "eth_newFilter"
+            | "eth_newBlockFilter"
+            | "eth_newPendingTransactionFilter"
+            | "eth_getFilterChanges"
+            | "eth_getFilterLogs"
+            | "eth_uninstallFilter"
+    )
 }
 
 /// Whether an upstream is answering.
@@ -260,6 +284,15 @@ impl Registry {
             return Err(RouteError::AllDown);
         }
 
+        // Node-local state goes to the same node every time: the first usable
+        // one, in declaration order, which is stable for as long as that node
+        // stays up. If it goes down its filters are gone with it, and the next
+        // node answering "filter not found" is then the true answer rather than
+        // a routing accident.
+        if requirements.node_local {
+            return Ok(usable[0]);
+        }
+
         // Weighted round-robin: an upstream with weight 3 appears three times in
         // the rotation. Simple, allocation-free for the common case, and good
         // enough while the list is a handful of nodes.
@@ -292,6 +325,45 @@ mod tests {
 
     fn full() -> Capabilities {
         Capabilities::default()
+    }
+
+    #[test]
+    fn a_filter_is_created_and_polled_on_the_same_node() {
+        let registry = Registry::new(vec![
+            Upstream::new("node1", "http://a"),
+            Upstream::new("node2", "http://b"),
+            Upstream::new("node3", "http://c"),
+        ]);
+
+        // Ordinary calls rotate, which is the point of three upstreams...
+        let ordinary = Requirements::for_method("eth_blockNumber", false);
+        let rotated: Vec<&str> = (0..3)
+            .map(|_| registry.select(&ordinary).unwrap().name.as_str())
+            .collect();
+        assert_eq!(rotated.len(), 3);
+        assert!(
+            rotated.windows(2).any(|pair| pair[0] != pair[1]),
+            "ordinary calls should be spread: {rotated:?}"
+        );
+
+        // ...and every call about a filter lands where the filter was made, no
+        // matter how many ordinary calls are interleaved between them.
+        let made = registry
+            .select(&Requirements::for_method("eth_newFilter", false))
+            .unwrap()
+            .name
+            .clone();
+        for method in [
+            "eth_getFilterChanges",
+            "eth_getFilterLogs",
+            "eth_uninstallFilter",
+        ] {
+            let _ = registry.select(&ordinary);
+            let polled = registry
+                .select(&Requirements::for_method(method, false))
+                .unwrap();
+            assert_eq!(polled.name, made, "{method} went somewhere else");
+        }
     }
 
     #[test]

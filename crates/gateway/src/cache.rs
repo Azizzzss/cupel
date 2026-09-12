@@ -1,57 +1,53 @@
 //! A cache for answers that cannot change.
 //!
 //! Most JSON-RPC traffic from a development tool is repetitive: the same block
-//! fetched again, the same receipt polled until it appears, `eth_chainId` asked
-//! on every single call. Serving those from memory keeps them off the node.
+//! fetched again, `eth_chainId` asked on every single call. Serving those from
+//! memory keeps them off the node.
 //!
 //! The rule here is deliberately narrow: **cache only what is provably
-//! immutable.** A block identified by hash cannot change. A block identified by
-//! `latest` changes every second. Getting this wrong does not show up as a slow
-//! gateway, it shows up as a client being told something false, so the default
-//! is to cache nothing and add methods only where the argument pins the answer.
+//! immutable.** Getting this wrong does not show up as a slow gateway, it shows
+//! up as a client being told something false, so the default is to cache
+//! nothing and add methods only where the question pins the answer for ever.
+//!
+//! "For ever" is the part that is easy to get wrong, and this module did. A
+//! question identified by a hash *looks* pinned, and a block identified by a
+//! number *looks* fixed once it exists, and neither is true on a chain that can
+//! reorganise:
+//!
+//! - A transaction looked up by hash while it is pending comes back with a null
+//!   `blockHash`. Cache that and the gateway reports it pending after it has
+//!   landed, indefinitely.
+//! - A receipt, or a mined transaction, names the block that included it. Before
+//!   finality a reorg can include the same transaction in a different block,
+//!   and a cached copy goes on naming the one that is no longer canonical.
+//! - A block by number names a position, and before finality a position can be
+//!   filled by a different block.
+//!
+//! Lab mode has one producer and cannot reorganise, which is why none of this
+//! showed. Network mode has three clients and can. Nothing above is cached any
+//! more; what remains is content-addressed or a property of the chain itself,
+//! and is immutable without any assumption about finality.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde_json::Value;
 
-/// Tags that name a moving target rather than a fixed block.
-const MOVING: [&str; 4] = ["latest", "pending", "safe", "finalized"];
-
 /// Whether a response to this call can ever change.
 ///
-/// `params` matters as much as the method: `eth_getBlockByNumber` is cacheable
-/// at block `0x5` and never cacheable at `latest`.
-pub fn is_immutable(method: &str, params: &Value) -> bool {
-    match method {
-        // Properties of the chain itself.
-        "eth_chainId" | "net_version" | "web3_clientVersion" => true,
-
-        // Identified by hash, so the answer is pinned by the question.
-        "eth_getBlockByHash"
-        | "eth_getTransactionByHash"
-        | "eth_getTransactionReceipt"
-        | "eth_getBlockTransactionCountByHash" => true,
-
-        // Identified by number, but only when the number is a number.
-        "eth_getBlockByNumber" | "eth_getBlockTransactionCountByNumber" => {
-            !references_moving_block(params)
-        }
-
-        // Everything else, including every balance and every call, is a
-        // question about *now*.
-        _ => false,
-    }
-}
-
-/// Whether any argument names a moving block.
-fn references_moving_block(params: &Value) -> bool {
-    match params {
-        Value::String(text) => MOVING.contains(&text.as_str()),
-        Value::Array(items) => items.iter().any(references_moving_block),
-        Value::Object(fields) => fields.values().any(references_moving_block),
-        _ => false,
-    }
+/// Only two kinds qualify. Properties of the chain, and a block identified by
+/// its hash — a hash commits to the block's contents, so a node may stop
+/// serving a block that was reorganised away, but it can never serve different
+/// contents under that hash.
+pub fn is_immutable(method: &str, _params: &Value) -> bool {
+    matches!(
+        method,
+        "eth_chainId"
+            | "net_version"
+            | "web3_clientVersion"
+            | "eth_getBlockByHash"
+            | "eth_getBlockTransactionCountByHash"
+    )
 }
 
 /// A bounded store of immutable responses.
@@ -123,32 +119,39 @@ mod tests {
     }
 
     #[test]
-    fn anything_identified_by_hash_is_cacheable() {
+    fn a_block_named_by_its_hash_is_cacheable() {
         let hash = json!(["0xabc", false]);
         assert!(is_immutable("eth_getBlockByHash", &hash));
-        assert!(is_immutable("eth_getTransactionByHash", &json!(["0xabc"])));
-        assert!(is_immutable("eth_getTransactionReceipt", &json!(["0xabc"])));
+        assert!(is_immutable(
+            "eth_getBlockTransactionCountByHash",
+            &json!(["0xabc"])
+        ));
     }
 
     #[test]
-    fn a_numbered_block_is_cacheable_but_latest_is_not() {
-        assert!(is_immutable("eth_getBlockByNumber", &json!(["0x5", false])));
+    fn answers_that_a_transaction_landing_or_a_reorg_can_change_are_not() {
+        // Keyed by hash, and still not pinned. A pending transaction's answer
+        // changes when it is mined; a receipt's block changes if a reorg
+        // includes the transaction somewhere else. These were cached, and the
+        // first of them served a landed transaction as pending for ever.
+        assert!(!is_immutable("eth_getTransactionByHash", &json!(["0xabc"])));
         assert!(!is_immutable(
-            "eth_getBlockByNumber",
-            &json!(["latest", false])
+            "eth_getTransactionReceipt",
+            &json!(["0xabc"])
         ));
-        assert!(!is_immutable(
-            "eth_getBlockByNumber",
-            &json!(["pending", false])
-        ));
-        assert!(!is_immutable(
-            "eth_getBlockByNumber",
-            &json!(["safe", false])
-        ));
-        assert!(!is_immutable(
-            "eth_getBlockByNumber",
-            &json!(["finalized", false])
-        ));
+
+        // A number is a position, and before finality a position can be filled
+        // by a different block. Every tag is a moving position as well.
+        for block in ["0x5", "latest", "pending", "safe", "finalized"] {
+            assert!(
+                !is_immutable("eth_getBlockByNumber", &json!([block, false])),
+                "{block}"
+            );
+            assert!(
+                !is_immutable("eth_getBlockTransactionCountByNumber", &json!([block])),
+                "{block}"
+            );
+        }
     }
 
     #[test]
@@ -166,20 +169,6 @@ mod tests {
         ] {
             assert!(!is_immutable(method, &json!([])), "{method}");
         }
-    }
-
-    #[test]
-    fn a_moving_tag_is_found_however_it_is_nested() {
-        // Clients pass block tags in objects as well as positionally, and a
-        // filter can bury one two levels down.
-        assert!(references_moving_block(&json!(["latest"])));
-        assert!(references_moving_block(&json!([{"blockTag": "latest"}])));
-        assert!(references_moving_block(
-            &json!([{"filter": {"toBlock": "pending"}}])
-        ));
-        assert!(!references_moving_block(
-            &json!(["0x1", {"toBlock": "0x2"}])
-        ));
     }
 
     #[test]

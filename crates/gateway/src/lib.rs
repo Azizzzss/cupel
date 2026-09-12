@@ -280,21 +280,33 @@ impl Gateway {
             }
         };
 
-        if let Some(result) = body.get("result").filter(|value| !value.is_null()) {
-            self.metrics.ok.fetch_add(1, Ordering::Relaxed);
-            if let Some(key) = cache_key {
-                self.cache.put(key, result.clone());
-            }
-            return json!({"jsonrpc": "2.0", "id": id, "result": result});
-        }
-
         // An error from the node is a valid answer about the request, not
         // evidence that the node is unwell — it is passed through untouched and
         // never counted against the upstream's health.
-        self.metrics.failed.fetch_add(1, Ordering::Relaxed);
-        match body.get("error") {
-            Some(error) => json!({"jsonrpc": "2.0", "id": id, "error": error}),
-            None => json!({"jsonrpc": "2.0", "id": id, "result": Value::Null}),
+        if let Some(error) = body.get("error").filter(|error| !error.is_null()) {
+            self.metrics.failed.fetch_add(1, Ordering::Relaxed);
+            return json!({"jsonrpc": "2.0", "id": id, "error": error});
+        }
+
+        // A null result is an answer as well: "no such block", "not mined yet".
+        // It used to be counted as a failed request, so a client polling for a
+        // receipt drove the failure rate up once a second for as long as the
+        // transaction was pending — a dashboard alarm raised by the most
+        // ordinary thing a client does. It is never cached, because null is
+        // precisely the answer that changes.
+        match body.get("result") {
+            Some(result) => {
+                self.metrics.ok.fetch_add(1, Ordering::Relaxed);
+                if let Some(key) = cache_key.filter(|_| !result.is_null()) {
+                    self.cache.put(key, result.clone());
+                }
+                json!({"jsonrpc": "2.0", "id": id, "result": result})
+            }
+            // Neither a result nor an error is not JSON-RPC at all.
+            None => {
+                self.metrics.failed.fetch_add(1, Ordering::Relaxed);
+                json!({"jsonrpc": "2.0", "id": id, "result": Value::Null})
+            }
         }
     }
 
@@ -554,6 +566,80 @@ mod cors_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Read one HTTP request: the headers, then exactly the body they announce.
+    ///
+    /// Closing a socket with part of a request still unread makes the OS send a
+    /// reset, which can reach the client before the response does. Reading the
+    /// whole request first is what keeps these stub upstreams from being flaky.
+    fn read_request(socket: &mut std::net::TcpStream) {
+        use std::io::Read;
+        let mut data = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let read = socket.read(&mut chunk).unwrap_or(0);
+            if read == 0 {
+                return;
+            }
+            data.extend_from_slice(&chunk[..read]);
+            let text = String::from_utf8_lossy(&data);
+            if let Some(end) = text.find("\r\n\r\n") {
+                let length = text[..end]
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|value| value.trim().parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                if data.len() >= end + 4 + length {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// An upstream on a local port that gives every request the same body.
+    fn stub_upstream(reply: &'static str) -> String {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut socket) = stream else { break };
+                read_request(&mut socket);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+                let _ = socket.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn a_null_result_is_an_answer_not_a_failure() {
+        // What a node says about a transaction that has not been mined yet.
+        let url = stub_upstream(r#"{"jsonrpc":"2.0","id":1,"result":null}"#);
+        let gateway = Gateway::new(Config::default(), vec![Upstream::new("stub", url.as_str())]);
+        let receipt = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_getTransactionReceipt",
+            "params": ["0xabc"],
+        });
+
+        for _ in 0..3 {
+            let answer = gateway.handle_one(receipt.clone()).await;
+            assert_eq!(answer["result"], Value::Null, "{answer}");
+            assert!(answer.get("error").is_none(), "{answer}");
+        }
+        // A client polling a pending receipt is the most ordinary thing a
+        // client does. It used to count every poll as a failed request.
+        assert_eq!(gateway.metrics.failed.load(Ordering::Relaxed), 0);
+        assert_eq!(gateway.metrics.ok.load(Ordering::Relaxed), 3);
+    }
 
     #[test]
     fn expensive_methods_are_recognised() {
