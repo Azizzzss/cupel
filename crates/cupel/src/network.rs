@@ -441,12 +441,9 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
     // that keeps working when one of them stops. Stop a node and requests move
     // to the other two.
     //
-    // The chain keeps producing blocks through that, but it stops finalising,
-    // and the arithmetic says it must: finality needs *more* than two thirds of
-    // the stake, and three nodes holding a third each leave exactly two thirds
-    // when one goes. No split of three nodes survives losing one. That is worth
-    // watching rather than working around — it is the 2/3 threshold being a
-    // threshold, on a chain small enough to see it happen.
+    // Whether the chain also stops finalising depends on *which* node stopped,
+    // and that is the part worth watching. See `stake_split` below: the three
+    // nodes do not hold a third each, and the threshold counts validators.
     let gateway = Arc::new(Gateway::new(
         GatewayConfig::default(),
         NODES
@@ -849,6 +846,51 @@ fn display(path: &Path) -> String {
     path.display().to_string()
 }
 
+/// The container to stop when demonstrating the threshold.
+///
+/// Named rather than written into the banner, because which node it has to be
+/// is arithmetic, not prose — `only_one_node_holds_enough_stake_to_stop_finality`
+/// derives it from the split and fails if this constant stops matching.
+const DEMO_STOP_CONTAINER: &str = "cupel-el1";
+
+/// How many validators each node ends up driving.
+///
+/// Sixty-four across three nodes is 22 / 21 / 21, not a third each:
+/// `validator_ranges` gives the remainder to the first node. Every sentence
+/// about stopping a node depends on that, so nothing restates it by hand.
+pub(crate) fn stake_split() -> Vec<usize> {
+    validator_ranges(VALIDATORS, NODES.len())
+        .iter()
+        .map(|(first, end)| end - first)
+        .collect()
+}
+
+/// Whether a given number of attesting validators can justify an epoch.
+///
+/// Strictly *more* than two thirds, kept in integers so the boundary case is
+/// exact: with 64 validators, 42 is not enough and 43 is.
+pub(crate) fn finalises(attesting: usize) -> bool {
+    attesting * 3 > VALIDATORS * 2
+}
+
+/// The smallest number of validators that can justify an epoch.
+pub(crate) fn votes_needed() -> usize {
+    (0..=VALIDATORS)
+        .find(|n| finalises(*n))
+        .unwrap_or(VALIDATORS)
+}
+
+/// The only node whose absence drops the chain below the threshold.
+///
+/// With 22 / 21 / 21 that is node 1: losing it leaves 42, and losing either
+/// other leaves 43, which still finalises with a tenth of a percent to spare.
+pub(crate) fn stopper_index() -> usize {
+    stake_split()
+        .iter()
+        .position(|held| !finalises(VALIDATORS - held))
+        .unwrap_or(0)
+}
+
 fn banner(gateway: bool) {
     println!();
     println!("  Cupel network v{}", env!("CARGO_PKG_VERSION"));
@@ -872,16 +914,37 @@ fn banner(gateway: bool) {
     println!("  Finality     four epochs of 32 slots — about 25 minutes from genesis");
     println!("  Contracts    the same addresses as lab mode");
     println!();
-    println!("  The first finalised epoch is a few minutes away.");
+    println!("  The first finalised epoch is about 25 minutes away.");
     println!("  cupel network status shows what all three think of the chain.");
     if gateway {
         println!();
-        println!("  Stop a node. The gateway routes around it and the chain keeps");
-        println!("  producing blocks — but it stops finalising, because finality");
-        println!("  needs more than two thirds and three nodes leave exactly two.");
-        println!("    docker stop cupel-el2");
+        let held = stake_split();
+        let total: usize = held.iter().sum();
+        let stopper = stopper_index();
+        println!(
+            "  Stop node{}. The gateway routes around it and the chain keeps",
+            stopper + 1
+        );
+        println!("  producing blocks — but it stops finalising: {total} validators");
+        println!(
+            "  split {} leave {} without it, and finality needs {}.",
+            held.iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join("/"),
+            total - held[stopper],
+            votes_needed()
+        );
+        println!("    docker stop {DEMO_STOP_CONTAINER}");
         println!("    curl -s {}/health", crate::GATEWAY_URL);
         println!("    cupel network status");
+        println!();
+        println!(
+            "  Stop either other node instead and {} remain, which is still above",
+            total - held[(stopper + 1) % held.len()]
+        );
+        println!("  the line — the chain barely notices. The threshold counts");
+        println!("  validators, not nodes, and sixty-four does not divide by three.");
         println!();
         println!("  Ctrl-C stops the gateway. The devnet keeps running.");
     }
@@ -920,6 +983,46 @@ mod tests {
         assert_eq!(
             SECONDS_PER_SLOT, MAINNET_SECONDS_PER_SLOT,
             "a config with no SECONDS_PER_SLOT gives mainnet-preset slots"
+        );
+    }
+
+    /// Which node the stop-a-node demo has to name, derived rather than asserted.
+    ///
+    /// Every place that told a reader to stop a node — this banner, walkthrough
+    /// 3, the README, the design note — used to say that stopping any one of
+    /// the three stopped finality, and named `cupel-el2`. That is true of equal
+    /// thirds. This split is not equal: 64 across three is 22 / 21 / 21, so
+    /// losing node 1 leaves 42 and stops, and losing either other leaves 43 and
+    /// does not. A reader following the old instruction stopped node 2, watched
+    /// finality carry on, and had no way to tell whether the lab or their
+    /// understanding was broken.
+    ///
+    /// The evidence was already in the repository: under Fulu, Teku's 21
+    /// validators published nothing for 147 slots and the chain finalised on
+    /// the other two nodes' 67.19% — which is this same 43 of 64.
+    #[test]
+    fn only_one_node_holds_enough_stake_to_stop_finality() {
+        let held = stake_split();
+        assert_eq!(held, vec![22, 21, 21]);
+        assert_eq!(held.iter().sum::<usize>(), VALIDATORS);
+
+        // The boundary itself: two thirds of 64 is 42.67, so 42 is below.
+        assert_eq!(votes_needed(), 43);
+        assert!(!finalises(42));
+        assert!(finalises(43));
+
+        let survives: Vec<bool> = held.iter().map(|h| finalises(VALIDATORS - h)).collect();
+        assert_eq!(
+            survives,
+            vec![false, true, true],
+            "only the node holding the remainder can stop finality by leaving"
+        );
+
+        assert_eq!(stopper_index(), 0);
+        assert_eq!(
+            DEMO_STOP_CONTAINER,
+            format!("cupel-el{}", stopper_index() + 1),
+            "the demo must name the node whose absence actually stops finality"
         );
     }
 

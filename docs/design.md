@@ -205,10 +205,19 @@ tag — that discipline is what stops month seven from being "still not demoable
 ## What phase E's demo turned out to be
 
 The plan promised "three clients reaching finality; stop one, the rest
-continue." The first half is what shipped. The second half is not true and the
-arithmetic says it cannot be: finality needs *more* than two thirds of the
-stake, and three nodes holding a third each leave exactly two thirds when one
-goes. No split of three nodes survives losing one.
+continue." Both halves shipped — but the second is conditional in a way the plan
+did not anticipate, and an earlier version of this document got it backwards.
+
+Sixty-four validators across three nodes is 22 / 21 / 21; the remainder goes to
+the first node. Finality needs *more* than two thirds: 43 of 64. So stopping
+node1 leaves 42 and finality stops, while stopping node2 or node3 leaves 43 and
+it continues. "No split of three nodes survives losing one" is true of equal
+thirds, and this split is not equal.
+
+The evidence was in this document the whole time: under Fulu, Teku's twenty-one
+validators published nothing for a hundred and forty-seven slots and the chain
+finalised anyway, "on the other two nodes\' 67.19% of the stake" (below). That is
+the same 43 of 64, observed rather than reasoned about.
 
 What actually happens is more interesting than the promise. The gateway routes
 around the missing node within seconds, blocks keep being proposed by the

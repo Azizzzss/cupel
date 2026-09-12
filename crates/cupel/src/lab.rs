@@ -455,17 +455,56 @@ async fn slots_epochs_and_finality() -> Result<()> {
     ));
 
     step(4, "The threshold, in this network's numbers");
-    field("Validators", "64, split 22 / 21 / 21 across three nodes");
-    field("Needed to finalise", "more than 2/3, so more than 42");
-    field("Any two nodes", "43 of 64, which is 67.19%");
-    field("With one node down", "exactly at the line, and it stops");
-    say(
-        "Which is why stopping any single node here stops finality without \
-         stopping block production. The chain keeps growing and stops becoming \
-         permanent. Three nodes holding a third each cannot survive losing one — \
-         that is the two thirds threshold being a threshold, at a scale where \
-         you can watch it happen.",
+    // Read from the same functions the banner reads from, so this cannot drift
+    // away from the chain the way the hardcoded version did.
+    let held = crate::network::stake_split();
+    let total: usize = held.iter().sum();
+    let needed = crate::network::votes_needed();
+    let stopper = crate::network::stopper_index();
+    let other = (stopper + 1) % held.len();
+
+    field(
+        "Validators",
+        &format!(
+            "{total}, split {} across three nodes",
+            held.iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(" / ")
+        ),
     );
+    field(
+        "Needed to finalise",
+        &format!("more than 2/3 of {total}, so {needed}"),
+    );
+    field(
+        &format!("Without node{}", stopper + 1),
+        &format!(
+            "{} left — below the line, and it stops",
+            total - held[stopper]
+        ),
+    );
+    field(
+        &format!(
+            "Without node{} or node{}",
+            other + 1,
+            (other + 1) % held.len() + 1
+        ),
+        &format!(
+            "{} left — {:.2}%, and it carries on",
+            total - held[other],
+            (total - held[other]) as f64 * 100.0 / total as f64
+        ),
+    );
+    say(&format!(
+        "So which node you stop decides what you see, and that is the part \
+         worth carrying away. Sixty-four does not divide by three, the \
+         remainder goes to node1, and the threshold counts validators rather \
+         than nodes. Stop node{} and the chain keeps growing while it stops \
+         becoming permanent. Stop either of the others and it barely notices, \
+         a tenth of a percent above the line.",
+        stopper + 1
+    ));
 
     closing(&[
         "Slots are time. Epochs are the accounting period. Justification is a \

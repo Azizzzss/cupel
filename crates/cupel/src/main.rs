@@ -132,7 +132,8 @@ enum Commands {
     ///
     /// Three execution clients paired with Lighthouse, Prysm and Teku, driven
     /// by sixty-four validators. Real consensus, real peers, real finality —
-    /// and a minute to the first finalised epoch, where lab mode is instant.
+    /// and about twenty-five minutes to the first finalised epoch, where lab
+    /// mode is instant.
     Network {
         #[command(subcommand)]
         command: NetworkCommand,

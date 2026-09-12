@@ -64,7 +64,7 @@
       "id": 2,
       "type": "stat",
       "title": "Clients disagreeing",
-      "description": "The gap between the furthest-ahead and furthest-behind client. One slot is scrape skew, not disagreement: the three are scraped independently every five seconds and a slot lasts six, so a sample will regularly catch one of them mid-slot. A gap that persists at two or more means three implementations built different chains from the same blocks, which is the most interesting failure this lab can produce.",
+      "description": "The gap between the furthest-ahead and furthest-behind client. One slot is scrape skew, not disagreement: the three are scraped independently every five seconds and a slot lasts twelve, so a sample will regularly catch one of them mid-slot. A gap that persists at two or more means three implementations built different chains from the same blocks, which is the most interesting failure this lab can produce.",
       "gridPos": {
         "h": 5,
         "w": 5,
@@ -154,7 +154,7 @@
       "id": 4,
       "type": "timeseries",
       "title": "Justified and finalised",
-      "description": "Justification comes first and finality follows it by an epoch. A justified epoch that stops climbing means participation has fallen below two thirds — usually one validator client that is not running.",
+      "description": "Justification comes first and finality follows it by an epoch. A justified epoch that stops climbing means participation has fallen below two thirds, which here means 43 of the 64 validators. Usually that is node1's validator client, which holds 22; the other two hold 21 each, and the chain finalises without either of them.",
       "gridPos": {
         "h": 6,
         "w": 12,

@@ -373,10 +373,14 @@ two thirds of the stake has to agree, and that means at least two of the three
 clients agreeing, in production code, about a chain they each built
 independently.
 
-The same arithmetic has a second edge worth knowing: stop any one node and the
-chain keeps producing blocks but stops finalising, because a third each leaves
-*exactly* two thirds when one goes, and the threshold is a strict one. No split
-of three nodes survives losing one. It resumes the moment the node is back.
+The same arithmetic has a second edge, and it is sharper than it looks: *which*
+node you stop decides what happens. Finality needs more than two thirds — 43 of
+64. Stop node1 and 42 remain, so the chain keeps producing blocks and stops
+finalising, resuming the moment the node is back. Stop node2 or node3 and 43
+remain, a tenth of a percent above the line, and finality carries on untroubled.
+
+The split is uneven because sixty-four does not divide by three, and that is the
+lesson rather than a detail: the threshold counts validators, not nodes.
 
 ```bash
 cupel network status
@@ -385,9 +389,9 @@ cupel network status
 ```
   node    consensus     block   slot   justified   finalized   peers
   --------------------------------------------------------------------
-  node1   Lighthouse      147    151          16          15       2
-  node2   Prysm           147    151          16          15       1
-  node3   Teku            147    151          16          15       1
+  node1   Lighthouse      147    151           3           2       2
+  node2   Prysm           147    151           3           2       1
+  node3   Teku            147    151           3           2       1
 ```
 
 Three clients, three sets of numbers, and they match. That is the whole point of
