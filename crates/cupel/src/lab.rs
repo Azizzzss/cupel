@@ -60,10 +60,15 @@ impl Mode {
     }
 
     /// Where to ask whether it is up.
-    fn probe(self) -> &'static str {
+    ///
+    /// Every client for the devnet, not just the first. Asking node1 alone
+    /// meant these walkthroughs refused to run whenever node1 was the node you
+    /// had stopped — and stopping node1 is exactly what walkthrough 3 tells you
+    /// to do.
+    fn probes(self) -> Vec<&'static str> {
         match self {
-            Mode::Lab => crate::NODE_RPC_URL,
-            Mode::Network => network::NODES[0].beacon,
+            Mode::Lab => vec![crate::NODE_RPC_URL],
+            Mode::Network => network::NODES.iter().map(|node| node.beacon).collect(),
         }
     }
 }
@@ -133,7 +138,7 @@ pub(crate) async fn run(root: &std::path::Path, number: u8) -> Result<()> {
     // string "require_lab()" — which it did, in the test itself. Moving the
     // guard to the one place every walkthrough passes through makes the
     // question unnecessary rather than answering it badly.
-    require(walk.mode, walk.mode.probe()).await?;
+    require(walk.mode, &walk.mode.probes()).await?;
     match number {
         1 => how_a_block_is_made(root).await,
         2 => where_a_transaction_waits(root).await,
@@ -174,10 +179,7 @@ async fn how_a_block_is_made(root: &std::path::Path) -> Result<()> {
          token cached for a minute starts being rejected.",
     );
 
-    let produced = producer
-        .produce_block(&head)
-        .await
-        .context("the block was not produced")?;
+    let produced = produce_one_block().await?;
     let exchanges = &produced.exchanges;
     if exchanges.len() != 4 {
         bail!(
@@ -228,7 +230,7 @@ async fn how_a_block_is_made(root: &std::path::Path) -> Result<()> {
 
     field(
         "Chain head after",
-        &format!("block {}", produced.head.number),
+        &format!("block {} ({})", produced.number, short(&produced.hash)),
     );
     field("Transactions in it", &produced.transactions.to_string());
     field("Gas used", &produced.gas_used.to_string());
@@ -327,16 +329,18 @@ async fn where_a_transaction_waits(root: &std::path::Path) -> Result<()> {
         "Nothing about the transaction changes until somebody asks for a block. \
          That is walkthrough 1's four calls, run once.",
     );
-    let produced = producer.produce_block(&head).await?;
-    field("New head", &format!("block {}", produced.head.number));
+    let produced = produce_one_block().await?;
+    field("New head", &format!("block {}", produced.number));
     field("Transactions in it", &produced.transactions.to_string());
 
     let receipt = rpc(crate::NODE_RPC_URL, "eth_getTransactionReceipt", &[&quoted]).await?;
     if receipt.is_null() {
         say(
-            "The receipt is still null. That happens when the transaction paid \
-             less than the client's floor — the same failure the README \
-             describes under --miner.gasprice, with no error attached to it.",
+            "The receipt is still null, which means the block that was just \
+             made did not include this transaction — the client had already \
+             started building it when the transaction arrived. Ask again after \
+             the next block and it will be there. Note what did not happen: \
+             nothing reported an error, because nothing went wrong.",
         );
     } else {
         field("Block", &both(&receipt["blockNumber"]));
@@ -552,7 +556,7 @@ async fn three_clients_one_chain() -> Result<()> {
     );
     println!("      client       finalised epoch   finalised block root");
     println!("      ------------------------------------------------------------");
-    let mut roots = Vec::new();
+    let mut pairs: Vec<(String, String)> = Vec::new();
     for node in network::NODES {
         let checkpoints = get(&format!(
             "{}/eth/v1/beacon/states/head/finality_checkpoints",
@@ -567,7 +571,7 @@ async fn three_clients_one_chain() -> Result<()> {
             .as_str()
             .unwrap_or("—");
         let root = header["data"]["root"].as_str().unwrap_or("—");
-        roots.push(root.to_string());
+        pairs.push((epoch.to_string(), root.to_string()));
         println!(
             "      {:<12} {:>15}   {}",
             node.consensus,
@@ -576,14 +580,29 @@ async fn three_clients_one_chain() -> Result<()> {
         );
     }
     println!();
+    // Two clients at different epochs hold different roots, and that is what
+    // being one epoch behind looks like — not what disagreement looks like.
+    // Comparing roots alone reported a client mid-transition as a consensus
+    // failure, which is the false alarm this walkthrough exists to teach people
+    // not to raise. Disagreement means the same epoch and a different root.
+    let answered: Vec<&(String, String)> = pairs
+        .iter()
+        .filter(|(epoch, root)| epoch != "—" && root != "—")
+        .collect();
+    let same_epoch = answered.windows(2).all(|pair| pair[0].0 == pair[1].0);
+    let same_root = answered.windows(2).all(|pair| pair[0].1 == pair[1].1);
     field(
         "Verdict",
-        if roots.iter().any(|r| r == "—") {
-            "not every client answered — is the devnet still starting?"
-        } else if roots.iter().all(|r| r == &roots[0]) {
+        if answered.is_empty() {
+            "no beacon node answered — is the devnet running?"
+        } else if answered.len() < pairs.len() {
+            "not every client answered — a stopped node looks exactly like this"
+        } else if !same_epoch {
+            "different epochs, so different roots: one client is behind, which is lag rather than disagreement"
+        } else if same_root {
             "one root, three clients — they agree"
         } else {
-            "the clients disagree, which is worth investigating"
+            "the same epoch and different roots — the clients disagree, which is worth investigating"
         },
     );
 
@@ -594,17 +613,27 @@ async fn three_clients_one_chain() -> Result<()> {
     );
     println!("      node     finalised block   hash");
     println!("      ------------------------------------------------------------");
-    let mut hashes = Vec::new();
+    // Three states, kept apart at the source. `unwrap_or(Value::Null)` folded
+    // "did not answer" into "has finalised nothing", and the verdict below then
+    // called a node that was not running "a slot behind".
+    let mut answers: Vec<Option<Option<String>>> = Vec::new();
     for node in network::NODES {
-        let block = rpc(
+        let answer = rpc(
             node.rpc,
             "eth_getBlockByNumber",
             &["\"finalized\"", "false"],
         )
-        .await
-        .unwrap_or(Value::Null);
+        .await;
+        let block = match &answer {
+            Err(_) => Value::Null,
+            Ok(block) => block.clone(),
+        };
+        answers.push(match &answer {
+            Err(_) => None,
+            Ok(Value::Null) => Some(None),
+            Ok(block) => Some(Some(block["hash"].as_str().unwrap_or_default().to_string())),
+        });
         let hash = block["hash"].as_str().unwrap_or("—");
-        hashes.push(hash.to_string());
         println!(
             "      {:<8} {:>15}   {}",
             node.name,
@@ -620,14 +649,19 @@ async fn three_clients_one_chain() -> Result<()> {
     // disagreed with anything — it has not been told one. Reporting that as a
     // disagreement is exactly the kind of false alarm this walkthrough is
     // supposed to teach people to avoid, and it fired on its first run.
-    let answered = hashes.iter().filter(|h| *h != "—").count();
+    let silent = answers.iter().filter(|a| a.is_none()).count();
+    let finalised: Vec<&String> = answers.iter().flatten().flatten().collect();
     field(
         "Verdict",
-        if answered == 0 {
+        if silent == answers.len() {
+            "no execution client answered — is the devnet running?"
+        } else if silent > 0 {
+            "not every client answered — a stopped node looks exactly like this, and it is not a disagreement"
+        } else if finalised.is_empty() {
             "nothing has finalised yet — four epochs from genesis, about 25 minutes"
-        } else if answered < hashes.len() {
-            "finalising now: some nodes have the block, the rest are a slot behind"
-        } else if hashes.iter().all(|h| h == &hashes[0]) {
+        } else if finalised.len() < answers.len() {
+            "finalising now: some nodes have the block, the rest have not been told about it yet"
+        } else if finalised.iter().all(|h| *h == finalised[0]) {
             "one block, three execution clients"
         } else {
             "the execution clients disagree"
@@ -655,6 +689,77 @@ async fn three_clients_one_chain() -> Result<()> {
 }
 
 // ------------------------------------------------------------------ plumbing
+
+/// The control room's produce endpoint, which `cupel up` serves on 8544.
+const CONTROL_PRODUCE: &str = "http://127.0.0.1:8544/api/produce";
+
+/// A block, and the calls that made it.
+struct Made {
+    number: u64,
+    hash: String,
+    transactions: u64,
+    gas_used: u64,
+    exchanges: Vec<Exchange>,
+}
+
+/// Ask for one block, from the process that owns the head.
+///
+/// Walkthroughs 1 and 2 used to build their own producer and drive the Engine
+/// API themselves. `cupel up` has to be running for either to work at all — and
+/// it is making a block every second from its own copy of the head, behind a
+/// lock held in that process. Two producers naming the same parent is a reorg
+/// at best; at worst the loop's next build request is refused as stale and
+/// production stops until it re-reads the head. Nothing reports any of it: the
+/// walkthrough prints four successful calls either way, which is the shape of
+/// bug this repository keeps finding.
+///
+/// So ask the process holding the lock. `/api/produce` is the endpoint the
+/// control room's button already uses: it takes that lock for the whole
+/// four-call sequence and returns the same exchanges this narrates.
+async fn produce_one_block() -> Result<Made> {
+    let answer: Value = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?
+        .post(CONTROL_PRODUCE)
+        .send()
+        .await
+        .with_context(|| {
+            format!(
+                "{CONTROL_PRODUCE} did not answer — `cupel up` serves it, and the \
+                 block has to be made by the process that holds the head"
+            )
+        })?
+        .json()
+        .await
+        .context("the control room's answer was not JSON")?;
+
+    if let Some(error) = answer.get("error").and_then(Value::as_str) {
+        bail!("the control room would not make a block: {error}");
+    }
+
+    let exchanges: Vec<Exchange> = answer["exchanges"]
+        .as_array()
+        .context("the control room returned a block with no exchanges")?
+        .iter()
+        .map(|call| Exchange {
+            method: call["method"].as_str().unwrap_or_default().to_string(),
+            request: call["request"].clone(),
+            response: call["response"].clone(),
+            elapsed: Duration::from_secs_f64(
+                call["elapsedMs"].as_f64().unwrap_or_default() / 1000.0,
+            ),
+        })
+        .collect();
+
+    let block = &answer["block"];
+    Ok(Made {
+        number: block["number"].as_u64().unwrap_or_default(),
+        hash: block["hash"].as_str().unwrap_or_default().to_string(),
+        transactions: block["transactions"].as_u64().unwrap_or_default(),
+        gas_used: block["gasUsed"].as_u64().unwrap_or_default(),
+        exchanges,
+    })
+}
 
 /// A producer pointed at the lab node, recording what it sends.
 ///
@@ -789,12 +894,17 @@ async fn get(url: &str) -> Result<Value> {
 }
 
 /// Refuse to run against a chain that is not there, and say how to start it.
-async fn require(mode: Mode, probe: &str) -> Result<()> {
-    let answering = match mode {
-        Mode::Lab => rpc(probe, "eth_chainId", &[]).await.is_ok(),
-        Mode::Network => get(&format!("{probe}/eth/v1/node/version")).await.is_ok(),
-    };
-    if !answering {
+async fn require(mode: Mode, probes: &[&str]) -> Result<()> {
+    for probe in probes {
+        let answering = match mode {
+            Mode::Lab => rpc(probe, "eth_chainId", &[]).await.is_ok(),
+            Mode::Network => get(&format!("{probe}/eth/v1/node/version")).await.is_ok(),
+        };
+        if answering {
+            return Ok(());
+        }
+    }
+    {
         bail!(
             "this walkthrough needs {} — start it with `{}`, then run this \
              again in another terminal",
@@ -802,7 +912,6 @@ async fn require(mode: Mode, probe: &str) -> Result<()> {
             mode.how_to_start()
         );
     }
-    Ok(())
 }
 
 // ------------------------------------------------------------------ printing
@@ -1063,7 +1172,7 @@ mod tests {
     async fn a_missing_chain_is_refused_with_the_command_that_starts_it() {
         for mode in [Mode::Lab, Mode::Network] {
             // Port 1 is reserved and never listening.
-            let error = require(mode, "http://127.0.0.1:1")
+            let error = require(mode, &["http://127.0.0.1:1"])
                 .await
                 .expect_err("nothing is listening there, so this must refuse");
             let said = error.to_string();
