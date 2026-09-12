@@ -148,9 +148,16 @@ impl Signer {
         &self,
         request: &SigningRequest,
         nonce: u64,
-        max_fee_per_gas: u128,
         max_priority_fee_per_gas: u128,
     ) -> Result<Vec<u8>, SignerError> {
+        // EIP-1559 forbids a tip above the fee cap and a node refuses one. Say
+        // so here, before the policy spends any of the window on it.
+        if max_priority_fee_per_gas > request.max_fee_per_gas {
+            return Err(SignerError::Malformed(format!(
+                "maxPriorityFeePerGas {max_priority_fee_per_gas} is above maxFeePerGas {}",
+                request.max_fee_per_gas
+            )));
+        }
         let held: HashSet<Address> = self.keys.keys().copied().collect();
 
         if let Decision::Refused(refusal) = self.engine.evaluate(request, &held) {
@@ -170,7 +177,7 @@ impl Signer {
             chain_id: self.chain_id,
             nonce,
             gas_limit: request.gas_limit,
-            max_fee_per_gas,
+            max_fee_per_gas: request.max_fee_per_gas,
             max_priority_fee_per_gas,
             to: match request.to {
                 Some(to) => TxKind::Call(to),
@@ -269,18 +276,50 @@ fn sign_from_params(signer: &Signer, params: Option<&Value>) -> Result<Vec<u8>, 
             None => Ok(None),
         }
     };
-    let quantity = |field: &str, fallback: u128| -> u128 {
-        call.get(field)
-            .and_then(Value::as_str)
-            .and_then(|text| u128::from_str_radix(text.trim_start_matches("0x"), 16).ok())
-            .unwrap_or(fallback)
+    // A JSON-RPC quantity is a 0x-prefixed hex string. Anything else in one of
+    // these fields is refused rather than guessed at. The previous version
+    // trimmed an optional "0x" and parsed hex either way, so a decimal "21000"
+    // became 135168; it turned anything it could not parse into a default; and
+    // it cut u128 down to u64 with `as`. Each of those signed a transaction
+    // other than the one that was asked for, and said nothing.
+    let digits = |field: &str| -> Result<Option<&str>, SignerError> {
+        match call.get(field) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(text)) => text.strip_prefix("0x").map(Some).ok_or_else(|| {
+                SignerError::Malformed(format!(
+                    "{field} must be a 0x-prefixed hex quantity, got {text:?}"
+                ))
+            }),
+            Some(other) => Err(SignerError::Malformed(format!(
+                "{field} must be a 0x-prefixed hex string, got {other}"
+            ))),
+        }
+    };
+    let quantity = |field: &str| -> Result<Option<u128>, SignerError> {
+        digits(field)?
+            .map(|hex| {
+                u128::from_str_radix(hex, 16).map_err(|_| {
+                    SignerError::Malformed(format!("{field} is not a hex quantity that fits"))
+                })
+            })
+            .transpose()
+    };
+    let small = |field: &str| -> Result<Option<u64>, SignerError> {
+        quantity(field)?
+            .map(|n| {
+                u64::try_from(n)
+                    .map_err(|_| SignerError::Malformed(format!("{field} does not fit in 64 bits")))
+            })
+            .transpose()
     };
 
     let from = address("from")?.ok_or_else(|| SignerError::Malformed("no from address".into()))?;
-    let value = call
-        .get("value")
-        .and_then(Value::as_str)
-        .and_then(|text| U256::from_str_radix(text.trim_start_matches("0x"), 16).ok())
+    let value = digits("value")?
+        .map(|hex| {
+            U256::from_str_radix(hex, 16)
+                .map_err(|_| SignerError::Malformed("value is not a hex quantity".into()))
+        })
+        .transpose()?
         .unwrap_or(U256::ZERO);
     let data = call
         .get("data")
@@ -290,19 +329,34 @@ fn sign_from_params(signer: &Signer, params: Option<&Value>) -> Result<Vec<u8>, 
         .transpose()?
         .unwrap_or_default();
 
+    // Nonce and gas are required, as geth's own eth_signTransaction requires
+    // them. The defaults they replace were each wrong in a way that looked
+    // right: a nonce of 0 is the first transaction an account ever sends and
+    // is refused by the node for every one after, and a gas limit of 21000 is a
+    // plain transfer, so any contract call signed with it runs out of gas.
+    // This service does not read the chain, so the caller supplies both.
+    let nonce = small("nonce")?.ok_or_else(|| {
+        SignerError::Malformed("nonce not specified — this signer does not read the chain".into())
+    })?;
+    let gas_limit = small("gas")?.ok_or_else(|| {
+        SignerError::Malformed("gas not specified — 21000 is a transfer, not a call".into())
+    })?;
+
     let request = SigningRequest {
         from,
         to: address("to")?,
         value,
-        gas_limit: quantity("gas", 21_000) as u64,
+        gas_limit,
+        // Fees keep lab-sized defaults when omitted: an absent fee is not a
+        // mistake the way an absent nonce is, and both count against the budget.
+        max_fee_per_gas: quantity("maxFeePerGas")?.unwrap_or(2_000_000_000),
         data,
     };
 
     signer.sign(
         &request,
-        quantity("nonce", 0) as u64,
-        quantity("maxFeePerGas", 2_000_000_000),
-        quantity("maxPriorityFeePerGas", 1_000_000),
+        nonce,
+        quantity("maxPriorityFeePerGas")?.unwrap_or(1_000_000),
     )
 }
 
@@ -399,8 +453,62 @@ mod tests {
             to: Some(Address::from([2u8; 20])),
             value,
             gas_limit: 21_000,
+            max_fee_per_gas: 2_000_000_000,
             data: Vec::new(),
         }
+    }
+
+    fn call(fields: Value) -> Value {
+        json!([fields])
+    }
+
+    #[test]
+    fn a_request_without_a_nonce_or_gas_is_refused_not_defaulted() {
+        let signer = signer_with(Policy::default());
+        let from = signer.accounts()[0].to_string();
+        let to = Address::from([2u8; 20]).to_string();
+
+        let no_nonce = call(json!({"from": from, "to": to, "gas": "0x5208"}));
+        let said = sign_from_params(&signer, Some(&no_nonce))
+            .unwrap_err()
+            .to_string();
+        assert!(said.contains("nonce"), "{said}");
+
+        let no_gas = call(json!({"from": from, "to": to, "nonce": "0x0"}));
+        let said = sign_from_params(&signer, Some(&no_gas))
+            .unwrap_err()
+            .to_string();
+        assert!(said.contains("gas"), "{said}");
+
+        let complete = call(json!({"from": from, "to": to, "nonce": "0x0", "gas": "0x5208"}));
+        assert!(sign_from_params(&signer, Some(&complete)).is_ok());
+    }
+
+    #[test]
+    fn a_quantity_is_hex_with_a_prefix_or_it_is_refused() {
+        let signer = signer_with(Policy::default());
+        let from = signer.accounts()[0].to_string();
+        let to = Address::from([2u8; 20]).to_string();
+        let with = |field: &str, value: Value| {
+            let mut fields = json!({"from": from, "to": to, "nonce": "0x0", "gas": "0x5208"});
+            fields[field] = value;
+            sign_from_params(&signer, Some(&call(fields)))
+        };
+
+        // A decimal was read as hex: "21000" became 135168.
+        assert!(with("gas", json!("21000")).is_err());
+        // A number rather than a string used to fall back to the default.
+        assert!(with("gas", json!(21000)).is_err());
+        // Unparseable used to fall back to the default too.
+        assert!(with("maxFeePerGas", json!("0xnothex")).is_err());
+        assert!(with("value", json!("0xnothex")).is_err());
+        // Too big for the field used to be truncated with `as`.
+        assert!(with("nonce", json!("0x10000000000000000")).is_err());
+        // A tip above the fee cap is refused, as a node would refuse it.
+        let mut fees = json!({"from": from, "to": to, "nonce": "0x0", "gas": "0x5208"});
+        fees["maxFeePerGas"] = json!("0x1");
+        fees["maxPriorityFeePerGas"] = json!("0x2");
+        assert!(sign_from_params(&signer, Some(&call(fees))).is_err());
     }
 
     #[test]
@@ -421,7 +529,7 @@ mod tests {
         let from = signer.accounts()[0];
 
         let raw = signer
-            .sign(&request(from, ether(1)), 0, 2_000_000_000, 1_000_000)
+            .sign(&request(from, ether(1)), 0, 1_000_000)
             .expect("within policy");
 
         // An EIP-1559 envelope, so the first byte is its type.
@@ -435,7 +543,7 @@ mod tests {
         let from = signer.accounts()[0];
 
         let error = signer
-            .sign(&request(from, ether(100)), 0, 2_000_000_000, 1_000_000)
+            .sign(&request(from, ether(100)), 0, 1_000_000)
             .expect_err("over the ceiling");
 
         assert!(matches!(
@@ -450,7 +558,7 @@ mod tests {
         let signer = signer_with(Policy::default());
         let from = signer.accounts()[0];
 
-        let _ = signer.sign(&request(from, ether(100)), 0, 2_000_000_000, 1_000_000);
+        let _ = signer.sign(&request(from, ether(100)), 0, 1_000_000);
 
         let entries = signer.audit().recent(10);
         assert_eq!(entries.len(), 1);
@@ -470,7 +578,7 @@ mod tests {
         let from = signer.accounts()[0];
 
         signer
-            .sign(&request(from, ether(1)), 0, 2_000_000_000, 1_000_000)
+            .sign(&request(from, ether(1)), 0, 1_000_000)
             .expect("within policy");
 
         let entry = signer.audit().recent(1).remove(0);
@@ -485,7 +593,7 @@ mod tests {
         let stranger = Address::from([9u8; 20]);
 
         let error = signer
-            .sign(&request(stranger, ether(1)), 0, 2_000_000_000, 1_000_000)
+            .sign(&request(stranger, ether(1)), 0, 1_000_000)
             .expect_err("not our key");
         assert!(matches!(
             error,
@@ -505,13 +613,13 @@ mod tests {
         for nonce in 0..2 {
             assert!(
                 signer
-                    .sign(&request(from, ether(1)), nonce, 2_000_000_000, 1_000_000)
+                    .sign(&request(from, ether(1)), nonce, 1_000_000)
                     .is_ok(),
                 "signature {nonce}"
             );
         }
         assert!(matches!(
-            signer.sign(&request(from, ether(1)), 2, 2_000_000_000, 1_000_000),
+            signer.sign(&request(from, ether(1)), 2, 1_000_000),
             Err(SignerError::Refused(Refusal::RateLimited { .. }))
         ));
     }
@@ -525,12 +633,8 @@ mod tests {
         });
         let from = signer.accounts()[0];
 
-        let first = signer
-            .sign(&request(from, ether(1)), 0, 2_000_000_000, 1_000_000)
-            .unwrap();
-        let second = signer
-            .sign(&request(from, ether(1)), 1, 2_000_000_000, 1_000_000)
-            .unwrap();
+        let first = signer.sign(&request(from, ether(1)), 0, 1_000_000).unwrap();
+        let second = signer.sign(&request(from, ether(1)), 1, 1_000_000).unwrap();
         assert_ne!(first, second);
     }
 

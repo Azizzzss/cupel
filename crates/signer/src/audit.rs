@@ -77,6 +77,8 @@ impl AuditLog {
             },
             "value": request.value.to_string(),
             "gas": request.gas_limit,
+            "max_fee_per_gas": request.max_fee_per_gas.to_string(),
+            "most_it_can_cost": request.most_it_can_cost().to_string(),
             "data_len": request.data.len(),
             "hash": hash,
         });
@@ -145,6 +147,7 @@ mod tests {
             to: Some(Address::from([2u8; 20])),
             value: U256::from(1000u64),
             gas_limit: 21_000,
+            max_fee_per_gas: 1,
             data: vec![1, 2, 3],
         }
     }

@@ -171,7 +171,7 @@ jobs:
 
           # The signer refuses what the policy forbids.
           curl -s -X POST http://127.0.0.1:8550 -H 'content-type: application/json' \
-            -d '{"jsonrpc":"2.0","id":1,"method":"eth_signTransaction","params":[{"from":"0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC","to":"0x0000000000000000000000000000000000000042","value":"0x56bc75e2d63100000","gas":"0x5208"}]}' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"eth_signTransaction","params":[{"from":"0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC","to":"0x0000000000000000000000000000000000000042","value":"0x56bc75e2d63100000","gas":"0x5208","nonce":"0x0"}]}' \
             | grep -q "refused by policy"
 
           echo "integration checks passed"

@@ -503,7 +503,12 @@ The rules are a per-transaction value ceiling, a gas ceiling, an optional
 recipient allowlist, a blocklist that beats it, whether the key may deploy at
 all, and both a **count and a spending budget** per window — a rate limit alone
 still permits ten transactions of the maximum size, and the budget is what bounds
-the total loss.
+the total. It counts what a transaction can cost the key, not only what it sends:
+its value, plus its whole gas limit at its maximum fee.
+
+Nonce and gas are required, as they are for geth's own `eth_signTransaction`: the
+signer does not read the chain, and the defaults they would otherwise need — a
+nonce of 0, a 21000 gas limit — are each wrong in a way that looks right.
 
 **Every decision is recorded, approvals included.** A log holding only refusals
 answers "what was blocked", and the question after an incident is always "what

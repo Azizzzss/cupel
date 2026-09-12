@@ -27,8 +27,29 @@ pub struct SigningRequest {
     pub value: U256,
     /// Gas limit requested.
     pub gas_limit: u64,
+    /// The most the sender will pay per unit of gas, tip included.
+    ///
+    /// Part of what is evaluated, not only of what is signed. It used to go
+    /// straight to the signature without the policy ever seeing it, so the
+    /// spending budget — described everywhere as what bounds the total loss —
+    /// counted value alone, and a caller could spend the key on fees without
+    /// limit.
+    pub max_fee_per_gas: u128,
     /// Calldata.
     pub data: Vec<u8>,
+}
+
+impl SigningRequest {
+    /// The most this transaction can take from the key: its value, plus its
+    /// whole gas limit paid at its maximum fee.
+    ///
+    /// The real charge is usually lower — unused gas is refunded and the base
+    /// fee is often below the cap — but a budget has to be counted against the
+    /// worst case, or it bounds nothing.
+    pub fn most_it_can_cost(&self) -> U256 {
+        let fees = U256::from(self.gas_limit).saturating_mul(U256::from(self.max_fee_per_gas));
+        self.value.saturating_add(fees)
+    }
 }
 
 /// Why a request was refused.
@@ -255,10 +276,11 @@ impl PolicyEngine {
             });
         }
 
-        let would_spend = window.spent.saturating_add(request.value);
+        let cost = request.most_it_can_cost();
+        let would_spend = window.spent.saturating_add(cost);
         if would_spend > self.policy.max_value_per_window {
             return Decision::Refused(Refusal::BudgetExceeded {
-                requested: request.value,
+                requested: cost,
                 remaining: self
                     .policy
                     .max_value_per_window
@@ -292,12 +314,18 @@ mod tests {
         U256::from(n) * U256::from(10u64).pow(U256::from(18u64))
     }
 
+    /// A request whose cost is exactly its value.
+    ///
+    /// The fee is zero so the tests below keep testing what they are named for —
+    /// the value ceiling, the count, the budget arithmetic — with round numbers.
+    /// That fees count is tested on its own, further down.
     fn request(value: U256) -> SigningRequest {
         SigningRequest {
             from: address(1),
             to: Some(address(2)),
             value,
             gas_limit: 21_000,
+            max_fee_per_gas: 0,
             data: Vec::new(),
         }
     }
@@ -518,6 +546,36 @@ mod tests {
                 window_seconds: 60,
             })
         );
+    }
+
+    #[test]
+    fn fees_count_against_the_budget_not_only_value() {
+        // A zero-value transaction is not free: the key pays for its gas. The
+        // budget counted value alone, so any number of these, each at a fee the
+        // caller chose, fitted inside a budget of one wei.
+        let engine = PolicyEngine::new(Policy {
+            max_gas: 1_000_000,
+            max_per_window: 100,
+            max_value_per_window: ether(1),
+            ..Policy::default()
+        });
+        let expensive = SigningRequest {
+            value: U256::ZERO,
+            gas_limit: 1_000_000,
+            // 1,000,000 gas at 600 gwei is 0.6 ether of worst-case fees.
+            max_fee_per_gas: 600_000_000_000,
+            ..request(U256::ZERO)
+        };
+        assert_eq!(
+            expensive.most_it_can_cost(),
+            U256::from(600_000_000_000_000_000u128)
+        );
+
+        assert!(engine.evaluate(&expensive, &held()).approved());
+        assert!(matches!(
+            engine.evaluate(&expensive, &held()),
+            Decision::Refused(Refusal::BudgetExceeded { .. })
+        ));
     }
 
     #[test]
