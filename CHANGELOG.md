@@ -38,6 +38,59 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   The page is compiled into the binary with `rust-embed`, so a release carries
   its own front end and running Cupel never needs a JavaScript toolchain.
 
+- **The control room, second pass.** A strip across the top with the vitals —
+  mode, chain id, the head as it ticks, the clock in network mode, the gateway,
+  the binary's version, and how old the oldest answer on the page is — and
+  pages down the side: Overview, Blocks, Accounts, Gateway, Consensus in
+  network mode, the walkthrough in lab mode. Routes live in the hash, because
+  the bundle refers to its assets relatively so the binary can mount it
+  anywhere, and a path with a second segment would resolve them under it. A
+  page the running mode does not have says so; a hash nothing lives at gets a
+  page too; a page that throws is the only thing that goes.
+
+  Every block number opens the block — the header as the client sent it, the
+  transactions in full — and every transaction opens what was sent, what it
+  cost and what happened, with the genesis contracts' events decoded by name
+  and everything else shown as the topics and data it is. Bounded on purpose:
+  fifty blocks, fifty more on request, five hundred at most. The recent
+  window, not an explorer; the explorer is phase G. The accounts page shows
+  the four development accounts with live balances and nonces, their keys
+  behind a click, and the three contracts with names, symbols and supplies
+  read by hand-rolled `eth_call`. The addresses are mirrored from the Rust
+  side and a Rust test reads the TypeScript to check the two agree.
+
+  Nothing pretends to be current. Every source remembers when it last
+  succeeded; a panel keeps its numbers across a failed request and, three
+  intervals later, greys them and says when they were last true. Stopping geth
+  no longer leaves a page that looks like a chain making blocks, and a node
+  whose last answer is too old counts as not answering in the verdict — never
+  as a silent vote for whichever root it last reported.
+
+  Push instead of poll. The page subscribes to `newHeads` over geth's
+  WebSocket and to each beacon node's event stream, and fetches the moment a
+  block is announced — over HTTP, through the gateway in lab mode, so the
+  socket is a doorbell and not a data path. Polling stretches while a socket
+  is open and never stops, so a dead-but-open socket cannot freeze the page.
+  Each panel says "live" or "polling"; a tab brought back from the background
+  asks everything at once.
+
+  Tests, for the first time: Vitest over the arithmetic — verdicts, slot
+  maths, ABI and log decoding, block and transaction parsing, formatting,
+  routes, freshness, the two wire formats — run in CI beside the lint and type
+  checks. A theme switch that remembers itself, and a tab title that mirrors
+  the head.
+
+### Changed
+
+- `GET /api/mode` carries the binary's version beside the mode, and the strip
+  shows it: the page is compiled into the binary, so it is exactly as old as
+  the process serving it.
+- Network-mode geth publishes a WebSocket per node, on 8558–8560, for the
+  control room's `newHeads` subscription; lab mode's has been on 8547 all
+  along. A test reads the compose file to check the flags and the ports are
+  there. The three execution containers are recreated on the next `up`; their
+  chains persist.
+
 ### Fixed
 
 - **No browser could call the gateway.** A JSON-RPC request carries

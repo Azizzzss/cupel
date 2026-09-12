@@ -173,12 +173,15 @@ and the capabilities — never over the protocol.
 
 | Port | Service | Exposed |
 |---|---|---|
+| 8544 | Control room | yes |
 | 8545 | Gateway — the only RPC anything should point at | yes |
 | 8546 | geth JSON-RPC, per node | internal |
+| 8547 | geth WebSocket, lab mode — the control room's `newHeads` | yes |
 | 8551 | Engine API, JWT authenticated | internal |
 | 30303 | devp2p, per node | internal |
 | 8550 | Policy signer | internal |
 | 8555–8557 | Network mode: each node's JSON-RPC | yes |
+| 8558–8560 | Network mode: each node's WebSocket | yes |
 | 5052 / 5152 / 5252 | Network mode: each beacon API | yes |
 | 6061–6063, 6071–6073 | Network mode: execution and consensus metrics | yes |
 | 9000 | Consensus p2p, per node | internal |

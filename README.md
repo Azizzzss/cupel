@@ -15,9 +15,10 @@ Prysm and Teku, sixty-four validators, a discovery bootnode, and a chain that
 genuinely reaches finality. Same contracts, same addresses, running on a laptop.
 
 Both open a **control room** in the browser: the head of the chain, the blocks
-as they arrive, whether the three clients agree on what is final — and a button
-that makes a block and shows you the four calls that made it, with the real
-requests, the real answers and the real timings.
+as they arrive and what was in them, the accounts and the contracts, whether
+the three clients agree on what is final — and a button that makes a block and
+shows you the four calls that made it, with the real requests, the real answers
+and the real timings.
 
 > A **cupel** is the porous bone-ash vessel used in fire assay. You heat an alloy
 > inside it; the base metals oxidise into the walls, and what remains is the pure
@@ -114,22 +115,50 @@ MetaMask connects at chain id **31337**; import any key above.
 
 The banner prints a second address. Open it.
 
-Four panels, every one of them reading from the chain rather than from anything
-this process remembers:
+A strip across the top that never scrolls away — mode, chain id, the head as it
+ticks, where the clock is in network mode, whether the gateway has upstreams,
+and how old the oldest answer on the page is — and pages down the side, every
+one of them reading from the chain rather than from anything this process
+remembers:
 
 | | |
 |---|---|
-| **Head** | number, hash, gas used, and how long ago it arrived |
-| **Blocks** | the last twelve as they land — backfilled on open, and gaps refetched, because polling every 1.5s against a chain making a block a second misses some and a reader's gaps must not look like a chain's |
-| **Gateway** | how many upstreams are answering, and what the cache and the rate limiter are doing |
-| **Agreement** | in network mode, what Lighthouse, Prysm and Teku each call the head, the justified epoch and the finalised one |
+| **Overview** | the blocks as they arrive, the gateway, and in network mode the agreement table and the clock |
+| **Blocks** | the recent window, fifty at a time and five hundred at most. Every number opens the block — the header as the client sent it, the transactions in full — and every transaction opens what was sent, what it cost, what happened, and the events the genesis contracts logged, decoded by name |
+| **Accounts** | the four development accounts with live balances and nonces, and the three contracts with their names, symbols and supplies read by `eth_call` |
+| **Gateway** | how many upstreams are answering, and what each has forwarded |
+| **Consensus** | network mode: what Lighthouse, Prysm and Teku each call the head, the justified epoch and the finalised one, and whether they agree |
+| **Walkthrough** | lab mode: the button that makes a block and shows the four calls that made it |
 
-The agreement panel distinguishes four outcomes, not two. A client that cannot
-be reached, a chain that has not finalised anything yet, a client that is merely
-*behind* by some number of epochs, and a client that actually **disagrees** at
-the same epoch are different situations, and only the last one is alarming.
-Collapsing them into "agree / disagree" is how a syncing node gets reported as a
-consensus failure.
+Two things this page does that a dashboard usually does not.
+
+**It says when a number stopped being true.** A panel keeps the last thing a
+source said, because a panel that blanks on one failed request is one nobody
+trusts — and once that answer is older than three intervals it greys and says
+"last answer 12s ago, showing what was true then". Stop geth and the page does
+not go on looking like a chain making blocks. The strip judges the page from
+its worst source.
+
+**It hears about blocks rather than asking.** geth publishes a WebSocket and
+the beacon nodes an event stream, and the page subscribes: `newHeads` rings,
+and the head is fetched over HTTP the moment it exists — in lab mode through
+the gateway, so the gateway's counters keep meaning something. The socket is a
+doorbell, not a data path. Polling never stops while it is open; it stretches,
+so a dead-but-open socket cannot freeze the page. Each panel says which it is
+getting, "live" or "polling".
+
+The agreement panel distinguishes several outcomes, not two. A client that
+cannot be reached, a chain that has not finalised anything yet, a client that is
+merely *behind* by some number of epochs, and a client that actually
+**disagrees** at the same epoch are different situations, and only the last one
+is alarming. Collapsing them into "agree / disagree" is how a syncing node gets
+reported as a consensus failure. A node whose last answer is too old counts as
+not answering — never as a silent vote for whichever root it last reported.
+
+The blocks pages are bounded on purpose. Fifty arrive on their own, fifty more
+come on request, and the page stops at five hundred and says so: this is the
+recent window, not an explorer. An explorer indexes; this asks. The explorer is
+phase G.
 
 Then there is a button that makes a block. It runs the same four Engine API
 calls the producer runs once a second, with a copy kept of everything sent and
@@ -149,19 +178,27 @@ method *and* occurrence rather than by position.
 Everything on the page except that button is read straight from the clients by
 the browser. The button is the exception: making a block means an authenticated
 call to the Engine API with a shared secret, over a port bound to localhost.
-That is this process's job, so there is exactly one endpoint behind the page,
-`POST /api/produce`, and it holds the head under a lock for the whole four-call
-sequence — each of those calls names the parent, so two producers working from
-one head would have the second building on a block the first had already
-replaced.
+That is this process's job, so `POST /api/produce` is behind the page, and it
+holds the head under a lock for the whole four-call sequence — each of those
+calls names the parent, so two producers working from one head would have the
+second building on a block the first had already replaced. The only other
+endpoint is `GET /api/mode`: which mode this process is running and which
+version it is, the one thing only the process knows.
+
+Pages are hash routes — `#/block/1234` — because the bundle refers to its assets
+relatively so the binary can mount it anywhere, and a path with a second
+segment would resolve them under `/block/`. Every address the page names — the
+four accounts and the three contracts — is mirrored from the Rust side, and a
+Rust test reads the TypeScript to check the two agree.
 
 The page is React and Vite, built to `ui/dist` and compiled into the binary with
 `rust-embed`. The bundle is committed, which is what lets `cargo build` and all
 four release targets produce a working control room with no JavaScript toolchain
 anywhere near them — the same trade the contracts make by committing bytecode
-into genesis. CI rebuilds it from source on every push and fails if the result
-differs from what is committed, because a build output kept in a repository
-becomes a lie the moment its source moves without it.
+into genesis. CI lints it, type-checks it, runs its tests, rebuilds it from
+source on every push and fails if the result differs from what is committed,
+because a build output kept in a repository becomes a lie the moment its source
+moves without it.
 
 ---
 
@@ -607,6 +644,7 @@ hide exactly the kind of difference this mode exists to surface.
 | `8544` | **the control room** |
 | `8545` | **the gateway** — the only RPC anything should point at |
 | `8546` | geth's own JSON-RPC, behind it |
+| `8547` | geth's WebSocket, for the control room's `newHeads` subscription |
 | `8550` | the policy signer |
 | `8551` | Engine API, JWT authenticated, localhost only |
 | `6060` | geth's metrics, for Prometheus |
@@ -617,6 +655,7 @@ Network mode uses its own ports, so both modes can run at once:
 | | |
 |---|---|
 | `8555` / `8556` / `8557` | the three execution clients' JSON-RPC |
+| `8558` / `8559` / `8560` | the three execution clients' WebSockets |
 | `5052` / `5152` / `5252` | the three beacon APIs |
 | `6061`–`6063`, `6071`–`6073` | execution and consensus metrics, for Prometheus |
 
