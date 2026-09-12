@@ -18,5 +18,14 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // The control room's API, made same-origin during development. The page
+    // on 5173 used to call 8544 directly, the control room sends no CORS
+    // headers, and so pressing the button produced a real block and then
+    // reported a failure: the browser threw away the answer to a request that
+    // had worked. Proxying puts dev, preview and the binary on one path.
+    proxy: { '/api': 'http://127.0.0.1:8544' },
+  },
+  preview: {
+    proxy: { '/api': 'http://127.0.0.1:8544' },
   },
 })

@@ -1571,6 +1571,7 @@ dependencies = [
  "rust-embed",
  "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]

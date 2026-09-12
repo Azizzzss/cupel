@@ -8,7 +8,7 @@ import { usePoll } from '../usePoll'
  * and watch it leave the rotation, start it and watch it come back, while the
  * requests keep being answered by whoever is left.
  */
-export function Gateway() {
+export function Gateway({ mode }: { mode: 'lab' | 'network' }) {
   const { data } = usePoll(() => gatewayHealth(), 2000, [])
 
   if (!data?.ok) {
@@ -64,13 +64,23 @@ export function Gateway() {
             ))}
           </tbody>
         </table>
-        <p className="panel-note" style={{ marginTop: '0.7rem' }}>
-          Routing resolves capability, then health, then weight. Two consecutive
-          failed probes take a node out — one is usually a blip — and a
-          successful one puts it back without anybody intervening. Try{' '}
-          <span className="mono">docker stop cupel-el2</span> and watch this
-          table rather than the terminal.
-        </p>
+        {mode === 'network' ? (
+          <p className="panel-note" style={{ marginTop: '0.7rem' }}>
+            Routing resolves capability, then health, then weight. Two consecutive
+            failed probes take a node out — one is usually a blip — and a
+            successful one puts it back without anybody intervening. Try{' '}
+            <span className="mono">docker stop cupel-el2</span>: the gateway
+            routes around it, and because node2 drives only 21 of the 64
+            validators, the chain keeps finalising as well.
+          </p>
+        ) : (
+          <p className="panel-note" style={{ marginTop: '0.7rem' }}>
+            One upstream in lab mode, so there is nothing to route around: stop
+            the node and this reads 0 of 1, and callers get a clear error rather
+            than a refused connection. The gateway earns its keep in network
+            mode, with three.
+          </p>
+        )}
       </div>
     </section>
   )

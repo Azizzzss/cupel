@@ -39,6 +39,13 @@ struct Assets;
 /// What the page needs from this process, rather than from the chain.
 #[derive(Clone)]
 pub(crate) struct Control {
+    /// Which mode this process is: `"lab"` or `"network"`.
+    ///
+    /// The page used to decide by probing fixed ports on 127.0.0.1 and taking
+    /// whichever answered, which misread a devnet started detached beside a
+    /// lab, and could not work at all for a page opened from another machine.
+    /// The process serving the page knows what it is, so the page asks.
+    pub(crate) mode: &'static str,
     /// What answers the walkthrough — in lab mode.
     ///
     /// `None` in network mode, where there is nothing for it to be. Blocks
@@ -65,6 +72,7 @@ pub(crate) struct Producing {
 pub(crate) fn router(control: Control) -> Router {
     Router::new()
         .route("/api/produce", post(produce))
+        .route("/api/mode", get(mode))
         .route("/api/health", get(|| async { "ok" }))
         .fallback(asset)
         .with_state(control)
@@ -136,6 +144,15 @@ async fn produce(State(control): State<Control>) -> Response {
     }
 }
 
+/// What this process is, for a page that would otherwise have to guess.
+async fn mode(State(control): State<Control>) -> Response {
+    axum::Json(json!({
+        "mode": control.mode,
+        "producing": control.producing.is_some(),
+    }))
+    .into_response()
+}
+
 /// Why there is no button in network mode.
 ///
 /// A 409 rather than a 404: the route exists and the request was understood,
@@ -202,7 +219,11 @@ mod tests {
         // a curl gets. It must not be a 500, and it must not quietly succeed by
         // building a block beside a chain sixty-four validators are agreeing
         // on — which is what an `unwrap` here would have done.
-        let response = produce(State(Control { producing: None })).await;
+        let response = produce(State(Control {
+            mode: "network",
+            producing: None,
+        }))
+        .await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
 
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -213,6 +234,34 @@ mod tests {
             text.contains("validators"),
             "the refusal should explain itself, got: {text}"
         );
+    }
+
+    #[tokio::test]
+    async fn the_page_can_ask_which_mode_it_is_looking_at() {
+        use tower::ServiceExt;
+
+        // Through `router`, not the handler called directly. The gateway's CORS
+        // bug survived because its test built a copy of the routes; whether the
+        // route is registered at all is part of what is being checked.
+        let response = router(Control {
+            mode: "network",
+            producing: None,
+        })
+        .oneshot(
+            axum::http::Request::get("/api/mode")
+                .body(axum::body::Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("a body");
+        let said: Value = serde_json::from_slice(&body).expect("JSON");
+        assert_eq!(said["mode"], "network");
+        assert_eq!(said["producing"], false);
     }
 
     #[test]

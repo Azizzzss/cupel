@@ -339,6 +339,7 @@ async fn up(root: &Path, block_time: u64, keep: bool, listen: IpAddr) -> Result<
     let control = tokio::spawn(web::serve_on(
         control_listener,
         web::Control {
+            mode: "lab",
             producing: Some(web::Producing {
                 narrator,
                 head: Arc::clone(&shared_head),

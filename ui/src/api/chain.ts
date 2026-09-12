@@ -14,10 +14,25 @@ export interface NodeTarget {
   consensus?: string
 }
 
+/**
+ * Whether this page was opened on the machine running Cupel.
+ *
+ * It matters because the two kinds of address here are reachable from
+ * different places. The gateway and the control room listen wherever `--bind`
+ * put them, so a page opened from another machine can reach them at the host it
+ * came from. The clients cannot be reached that way at all: Docker publishes
+ * every client port on 127.0.0.1, so from anywhere else those panels can only
+ * ever say "not answering".
+ */
+export const VIEWING_LOCALLY = ['', 'localhost', '127.0.0.1', '[::1]'].includes(
+  window.location.hostname,
+)
+
+/** The gateway, at the host this page was served from. */
+export const GATEWAY = `http://${VIEWING_LOCALLY ? '127.0.0.1' : window.location.hostname}:8545`
+
 /** Lab mode: one node behind the gateway, driven by a producer on the host. */
-export const LAB: NodeTarget[] = [
-  { name: 'lab', rpc: 'http://127.0.0.1:8545' },
-]
+export const LAB: NodeTarget[] = [{ name: 'lab', rpc: GATEWAY }]
 
 /** Network mode: three execution clients, three different consensus clients. */
 export const NETWORK: NodeTarget[] = [
@@ -50,12 +65,25 @@ export type Answer<T> =
 
 const TIMEOUT_MS = 2500
 
-async function json(url: string, init?: RequestInit): Promise<Answer<unknown>> {
+/**
+ * Fetch and parse, reporting the two ways that can fail separately.
+ *
+ * `accept` names statuses that are answers rather than refusals. The gateway's
+ * `/health` returns 503 with a full body when every upstream is down — correct
+ * for a load balancer, and exactly the moment the panel most needs to show
+ * which upstreams are down. Treating every non-2xx as a refusal turned that
+ * into "the gateway is not running".
+ */
+async function json(
+  url: string,
+  init?: RequestInit,
+  accept: number[] = [],
+): Promise<Answer<unknown>> {
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(), TIMEOUT_MS)
   try {
     const response = await fetch(url, { ...init, signal: abort.signal })
-    if (!response.ok) return { ok: false, reason: 'refused' }
+    if (!response.ok && !accept.includes(response.status)) return { ok: false, reason: 'refused' }
     return { ok: true, value: await response.json() }
   } catch {
     // A client that is not running and a client that is starting up look
@@ -144,14 +172,24 @@ export interface BeaconState {
   syncing: boolean
   justified: number
   finalized: number
-  peers: number
-  secondsPerSlot: number
-  slotsPerEpoch: number
-  genesisTime: number
+  /** From the same response as `finalized`, so the pair always belongs together. */
+  finalizedRoot: string
+  /** Undefined where the client did not say, rather than a number made up here. */
+  peers: number | undefined
+  secondsPerSlot: number | undefined
+  slotsPerEpoch: number | undefined
+  genesisTime: number | undefined
 }
 
 function asNumber(value: unknown): number {
   return typeof value === 'string' ? (Number.parseInt(value, 10) || 0) : 0
+}
+
+/** A number the client reported, or undefined if it reported none. */
+function reported(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) ? parsed : undefined
 }
 
 export async function beaconState(beacon: string): Promise<Answer<BeaconState>> {
@@ -162,13 +200,16 @@ export async function beaconState(beacon: string): Promise<Answer<BeaconState>> 
     json(`${beacon}/eth/v1/config/spec`),
     json(`${beacon}/eth/v1/beacon/genesis`),
   ])
+  // Finality is what this state is for, so a client that will not say where it
+  // is has not answered — rather than reading as a chain at epoch zero.
   if (!syncing.ok) return syncing
+  if (!checkpoints.ok) return checkpoints
 
   const data = (v: Answer<unknown>) =>
     v.ok ? ((v.value as { data?: Record<string, unknown> }).data ?? {}) : {}
 
   const sync = data(syncing)
-  const finality = data(checkpoints) as Record<string, { epoch?: string }>
+  const finality = data(checkpoints) as Record<string, { epoch?: string; root?: string }>
   const specData = data(spec)
 
   return {
@@ -178,23 +219,17 @@ export async function beaconState(beacon: string): Promise<Answer<BeaconState>> 
       syncing: sync.is_syncing === true,
       justified: asNumber(finality.current_justified?.epoch),
       finalized: asNumber(finality.finalized?.epoch),
-      peers: asNumber(data(peers).connected),
-      // Asked for rather than assumed. Hard-coding these is exactly how the
-      // control plane spent two releases claiming six-second slots on a chain
-      // that was running twelve.
-      secondsPerSlot: asNumber(specData.SECONDS_PER_SLOT) || 12,
-      slotsPerEpoch: asNumber(specData.SLOTS_PER_EPOCH) || 32,
-      genesisTime: asNumber(data(genesis).genesis_time),
+      finalizedRoot: String(finality.finalized?.root ?? ''),
+      peers: reported(data(peers).connected),
+      // Asked for rather than assumed — and undefined when the answer did not
+      // come. The comment here used to say that, directly above `|| 12` and
+      // `|| 32`, so a failed request produced mainnet's numbers presented as
+      // this chain's: the exact failure the comment was warning about.
+      secondsPerSlot: reported(specData.SECONDS_PER_SLOT),
+      slotsPerEpoch: reported(specData.SLOTS_PER_EPOCH),
+      genesisTime: reported(data(genesis).genesis_time),
     },
   }
-}
-
-/** The finalised beacon block root, which is what "do they agree" means. */
-export async function finalizedRoot(beacon: string): Promise<Answer<string>> {
-  const answer = await json(`${beacon}/eth/v1/beacon/headers/finalized`)
-  if (!answer.ok) return answer
-  const root = (answer.value as { data?: { root?: string } }).data?.root
-  return root ? { ok: true, value: root } : { ok: false, reason: 'refused' }
 }
 
 /* -------------------------------------------------------------- the gateway */
@@ -207,9 +242,9 @@ export interface Upstream {
 }
 
 export async function gatewayHealth(
-  gateway = 'http://127.0.0.1:8545',
+  gateway = GATEWAY,
 ): Promise<Answer<{ healthy: number; total: number; upstreams: Upstream[] }>> {
-  const answer = await json(`${gateway}/health`)
+  const answer = await json(`${gateway}/health`, undefined, [503])
   if (!answer.ok) return answer
   const body = answer.value as {
     healthy?: number
@@ -229,13 +264,24 @@ export async function gatewayHealth(
 /* ------------------------------------------------------------ mode detection */
 
 /**
- * Which mode is running, decided by asking rather than by being told.
+ * Which mode is running.
  *
- * The control room is a static page: it can be opened from a file, from the
- * `cupel` binary, or from a dev server, and in every case the answer to "what
- * is up" is the same question put to the same ports.
+ * Asked of the process that served this page first, because it knows. Guessing
+ * from which fixed port answered misread a devnet started detached beside a lab
+ * — the gateway on 8545 answers in both modes, and the network clients answer
+ * whether or not anything is fronting them — and it could not work at all for a
+ * page opened from another machine, where none of those ports are reachable.
+ *
+ * The probe is kept as a fallback, for a dev server started with nothing behind
+ * it and a page opened from a file.
  */
-export async function detectMode(): Promise<Mode> {
+export async function detectMode(control: string): Promise<Mode> {
+  const told = await json(`${control}/api/mode`)
+  if (told.ok) {
+    const mode = (told.value as { mode?: unknown }).mode
+    if (mode === 'lab' || mode === 'network') return mode
+  }
+
   const [network, lab] = await Promise.all([
     chainId(NETWORK[0].rpc),
     chainId(LAB[0].rpc),

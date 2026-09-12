@@ -28,3 +28,8 @@ reqwest.workspace = true
 rust-embed = "8"
 serde_json.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+# The same as the gateway's: enough of tower to put a request through a real
+# router in a test rather than calling a handler around it.
+tower = { version = "0.5", features = ["util"] }

@@ -494,7 +494,10 @@ pub(crate) async fn up(root: &Path, detach: bool, listen: std::net::IpAddr) -> R
     let control_listener = crate::web::bind(&control_addr).await?;
     let control = tokio::spawn(crate::web::serve_on(
         control_listener,
-        crate::web::Control { producing: None },
+        crate::web::Control {
+            mode: "network",
+            producing: None,
+        },
     ));
 
     let gateway_url = crate::url_for(listen, crate::GATEWAY_PORT);

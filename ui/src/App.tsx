@@ -1,4 +1,4 @@
-import { LAB, NETWORK, chainId, detectMode, type Mode } from './api/chain'
+import { LAB, NETWORK, VIEWING_LOCALLY, chainId, detectMode, type Mode } from './api/chain'
 import { Agreement } from './components/Agreement'
 import { BlockFeed } from './components/BlockFeed'
 import { Gateway } from './components/Gateway'
@@ -7,22 +7,25 @@ import { Walkthrough } from './components/Walkthrough'
 import { usePoll } from './usePoll'
 
 /**
- * Where the control room's own API lives.
+ * Where the control room's own API lives: this origin, always.
  *
- * Empty when this page is served by the `cupel` binary, because then it is the
- * same origin. During `npm run dev` the page comes from Vite and the API does
- * not, so it needs naming.
+ * Served by the binary it is the same origin by construction, and under `npm
+ * run dev` or `preview` Vite proxies `/api` to the control room. It used to be
+ * named explicitly when the port was 5173, which made the request cross-origin
+ * — and the control room sends no CORS headers, so a successful produce came
+ * back as a failure.
  */
-const CONTROL = window.location.port === '5173' ? 'http://127.0.0.1:8544' : ''
+const CONTROL = ''
 
 export default function App() {
   // Which mode is running is itself polled, so bringing a devnet up in another
   // terminal changes this page without anybody reloading it.
-  const { data: mode, loading } = usePoll(detectMode, 4000, [])
+  const { data: mode, loading } = usePoll(() => detectMode(CONTROL), 4000, [])
 
   return (
     <div className="app">
       <Header mode={mode ?? 'none'} loading={loading} />
+      <Elsewhere />
       {mode === 'network' && <NetworkView />}
       {mode === 'lab' && <LabView />}
       {mode === 'none' && !loading && <Nothing />}
@@ -71,7 +74,7 @@ function NetworkView() {
         <SlotClock />
         <BlockFeed key={NETWORK[0].rpc} rpc={NETWORK[0].rpc} />
       </div>
-      <Gateway />
+      <Gateway mode="network" />
       <NobodyInCharge />
     </>
   )
@@ -94,8 +97,8 @@ function NobodyInCharge() {
       <div className="panel-body">
         <p className="dim" style={{ margin: 0, fontSize: '0.88rem' }}>
           In lab mode a producer on the host asks one client for a block, four
-          authenticated calls at a time, and the button above runs that
-          sequence. There is no such caller here. Sixty-four validators split
+          authenticated calls at a time, and the control room there has a
+          button that runs that sequence. There is no such caller here. Sixty-four validators split
           across these three nodes propose and attest on a schedule nobody
           controls, and the chain above is whatever they agreed on — which is
           why it can stop finalising, and why that is worth watching.
@@ -116,7 +119,7 @@ function LabView() {
     <>
       <div className="grid grid-2">
         <BlockFeed key={LAB[0].rpc} rpc={LAB[0].rpc} />
-        <Gateway />
+        <Gateway mode="lab" />
       </div>
       <Walkthrough controlUrl={CONTROL} />
       <section className="panel">
@@ -127,8 +130,12 @@ function LabView() {
           <p className="dim" style={{ margin: 0, fontSize: '0.88rem' }}>
             Lab mode is one execution client told what to do by a producer on
             the host: four authenticated Engine API calls, and a block. There
-            are no slots, no attestations and no finality, because there is
-            nobody to vote. That is what buys the eight-second start.
+            are no slots and no attestations, because there is nobody to vote —
+            and no finality in the sense network mode means it. Geth will still
+            call every block finalised, because the producer names each one
+            safe and finalised the moment it makes it: the only answer
+            available when a single party decides. That is what buys the
+            eight-second start.
           </p>
           <p className="panel-note" style={{ margin: 0 }}>
             For slots, epochs, three clients and a chain that finalises, run{' '}
@@ -138,6 +145,31 @@ function LabView() {
         </div>
       </section>
     </>
+  )
+}
+
+/**
+ * Said out loud when this page is opened from another machine.
+ *
+ * The gateway and this page follow `--bind`, so they can be reached from
+ * elsewhere. The clients cannot: Docker publishes every client port on
+ * 127.0.0.1. Without this, those panels sit on "not answering" with nothing to
+ * say why, which reads as a broken devnet rather than a boundary.
+ */
+function Elsewhere() {
+  if (VIEWING_LOCALLY) return null
+  return (
+    <section className="panel">
+      <div className="panel-body">
+        <p className="dim" style={{ margin: 0, fontSize: '0.88rem' }}>
+          You are looking at this from another machine. The gateway and this
+          page follow <span className="mono">--bind</span>, so they answer
+          here; each client&apos;s own ports are published on 127.0.0.1 only, so
+          the panels that read clients directly can only be seen on the machine
+          running Cupel.
+        </p>
+      </div>
+    </section>
   )
 }
 
