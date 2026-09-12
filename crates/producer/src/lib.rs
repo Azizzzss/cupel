@@ -49,6 +49,16 @@ pub enum ProducerError {
     /// The HTTP request itself failed.
     #[error("engine api transport: {0}")]
     Transport(#[from] reqwest::Error),
+    /// The node answered with an HTTP error, before any JSON-RPC happened.
+    #[error("{method} was refused with HTTP {status}: {}", http_detail(.status, .body))]
+    Http {
+        /// The method that was called.
+        method: String,
+        /// The HTTP status.
+        status: u16,
+        /// Whatever the node sent with it, which usually names the problem.
+        body: String,
+    },
     /// The node returned a JSON-RPC error object.
     #[error("engine api rejected {method}: {message}")]
     Rpc {
@@ -156,13 +166,75 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             engine_url: "http://127.0.0.1:8551".to_string(),
-            rpc_url: "http://127.0.0.1:8545".to_string(),
+            // The node itself, not the gateway in front of it. This said 8545
+            // from before the gateway existed; since phase C that port is the
+            // gateway, and block production must not depend on something that
+            // rate-limits and can refuse requests.
+            rpc_url: "http://127.0.0.1:8546".to_string(),
             jwt_secret: [0u8; 32],
             fee_recipient: "0x0000000000000000000000000000000000000000".to_string(),
             block_time: Duration::from_secs(1),
             record_exchanges: false,
             build_delay: Duration::from_millis(500),
         }
+    }
+}
+
+/// The versioned hashes of every blob in a built payload, in order.
+///
+/// `engine_newPayloadV3` takes these as its second parameter and the client
+/// checks them against the blob transactions inside the payload. This used to
+/// send an empty list, always — which is right for a block with no blobs and
+/// wrong for one that has any. One blob transaction in the pool was enough: the
+/// client built a payload containing it, rejected that payload because the
+/// hashes did not match, and the transaction stayed in the pool to be built into
+/// the next attempt, and the next. Lab production stopped for good, with a
+/// validation error nobody connected to a transaction sent minutes earlier.
+///
+/// Each hash is the version byte `0x01` followed by the last 31 bytes of the
+/// SHA-256 of a KZG commitment (EIP-4844). The commitments come back from
+/// `engine_getPayloadV3` in `blobsBundle`, in the order the blobs appear in the
+/// payload, which is the order the client expects the hashes in.
+fn blob_versioned_hashes(built: &Value, method: &str) -> Result<Vec<String>, ProducerError> {
+    use sha2::{Digest, Sha256};
+
+    let Some(commitments) = built["blobsBundle"]["commitments"].as_array() else {
+        return Ok(Vec::new());
+    };
+    commitments
+        .iter()
+        .map(|commitment| {
+            let bytes = commitment
+                .as_str()
+                .and_then(|hex| hex::decode(hex.trim_start_matches("0x")).ok())
+                .filter(|bytes| bytes.len() == 48)
+                .ok_or_else(|| ProducerError::Malformed {
+                    method: method.to_string(),
+                    detail: format!("a blob commitment is not 48 bytes: {commitment}"),
+                })?;
+            let mut hash = Sha256::digest(&bytes);
+            hash[0] = 0x01;
+            Ok(format!("0x{}", hex::encode(hash)))
+        })
+        .collect()
+}
+
+/// What an HTTP refusal means, where the status alone would not say.
+fn http_detail(status: &u16, body: &str) -> String {
+    let said = if body.is_empty() {
+        "no body".to_string()
+    } else {
+        body.to_string()
+    };
+    if *status == 401 {
+        format!(
+            "{said} — the Engine API refused the token. geth reads jwt.hex once, \
+             at startup, and accepts a token only within sixty seconds of its own \
+             clock: a secret regenerated while geth kept running and a clock that \
+             has drifted both look exactly like this"
+        )
+    } else {
+        said
     }
 }
 
@@ -247,13 +319,14 @@ impl Producer {
             .engine_call("engine_getPayloadV3", json!([payload_id]), &mut exchanges)
             .await?;
         let payload = &built["executionPayload"];
+        let blob_hashes = blob_versioned_hashes(&built, "engine_getPayloadV3")?;
 
         // 3. Hand it back for validation. Without this the client has built a
         //    block but never checked or stored it.
         let accepted = self
             .engine_call(
                 "engine_newPayloadV3",
-                json!([payload, Vec::<String>::new(), ZERO_HASH]),
+                json!([payload, blob_hashes, ZERO_HASH]),
                 &mut exchanges,
             )
             .await?;
@@ -347,15 +420,43 @@ impl Producer {
             request = request.bearer_auth(self.token()?);
         }
 
-        let body: Value = request.send().await?.json().await?;
+        // The status first, then the body. Parsing JSON before looking at the
+        // status turned geth's 401 — a plain-text body naming the real
+        // problem, usually a token outside its clock window — into "error
+        // decoding response body", which names nothing at all.
+        let response = request.send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+        if !status.is_success() {
+            return Err(ProducerError::Http {
+                method: method.to_string(),
+                status: status.as_u16(),
+                body: text.trim().to_string(),
+            });
+        }
+        let body: Value =
+            serde_json::from_str(&text).map_err(|error| ProducerError::Malformed {
+                method: method.to_string(),
+                detail: format!("the answer was not JSON ({error}): {}", text.trim()),
+            })?;
 
         if let Some(error) = body.get("error").filter(|error| !error.is_null()) {
+            let message = error["message"]
+                .as_str()
+                .map_or_else(|| error.to_string(), str::to_string);
+            // `data` is where a client puts the useful half — the validation
+            // reason, the field it could not read — and it was being dropped.
+            let message = match error.get("data").filter(|data| !data.is_null()) {
+                Some(data) => format!(
+                    "{message} ({})",
+                    data.as_str()
+                        .map_or_else(|| data.to_string(), str::to_string)
+                ),
+                None => message,
+            };
             return Err(ProducerError::Rpc {
                 method: method.to_string(),
-                message: error["message"]
-                    .as_str()
-                    .unwrap_or(&error.to_string())
-                    .to_string(),
+                message,
             });
         }
         body.get("result")
@@ -503,6 +604,183 @@ mod tests {
         assert_eq!(state["headBlockHash"], "0xabc");
         assert_eq!(state["safeBlockHash"], "0xabc");
         assert_eq!(state["finalizedBlockHash"], "0xabc");
+    }
+
+    #[test]
+    fn blob_hashes_come_from_the_commitments_the_client_returned() {
+        // The commitment to an all-zero blob — the compressed point at infinity
+        // — and its versioned hash. The expected value was computed with
+        // Python's hashlib, not with the code under test, and matches the
+        // empty-blob hash used throughout Ethereum's own test suites.
+        let built = json!({
+            "blobsBundle": {
+                "commitments": [format!("0xc0{}", "00".repeat(47))],
+                "proofs": [],
+                "blobs": [],
+            }
+        });
+        assert_eq!(
+            blob_versioned_hashes(&built, "m").unwrap(),
+            vec!["0x010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c444014"]
+        );
+
+        // No blobs, no hashes: the ordinary block, and what was always sent.
+        let empty = json!({"blobsBundle": {"commitments": []}});
+        assert!(blob_versioned_hashes(&empty, "m").unwrap().is_empty());
+        assert!(blob_versioned_hashes(&json!({}), "m").unwrap().is_empty());
+
+        // A commitment of the wrong length is refused rather than hashed into
+        // something the client would reject with a less useful message.
+        let short = json!({"blobsBundle": {"commitments": ["0xc0"]}});
+        assert!(blob_versioned_hashes(&short, "m").is_err());
+    }
+
+    /// Read one HTTP request off a socket: headers, then exactly the body.
+    fn read_request(socket: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+        let mut data = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let read = socket.read(&mut chunk).unwrap();
+            if read == 0 {
+                break;
+            }
+            data.extend_from_slice(&chunk[..read]);
+            let text = String::from_utf8_lossy(&data);
+            if let Some(end) = text.find("\r\n\r\n") {
+                let length = text[..end]
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|value| value.trim().parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                if data.len() >= end + 4 + length {
+                    break;
+                }
+            }
+        }
+        String::from_utf8_lossy(&data).into_owned()
+    }
+
+    /// The whole sequence, against a stand-in client whose payload carries a blob.
+    ///
+    /// `blob_versioned_hashes` has its own test, and that test would keep
+    /// passing if the call site went back to sending an empty list — which is
+    /// what it did, and what stopped production. So this one checks the call
+    /// site: it runs `produce_block` end to end and records what
+    /// `engine_newPayloadV3` was actually sent.
+    #[tokio::test]
+    async fn new_payload_is_told_the_blob_hashes_of_the_payload_it_is_given() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        let sent: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let record = Arc::clone(&sent);
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(4) {
+                let mut socket = stream.unwrap();
+                let request = read_request(&mut socket);
+                let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
+                let call: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+                let result = match call["method"].as_str().unwrap_or_default() {
+                    "engine_forkchoiceUpdatedV3" if !call["params"][1].is_null() => json!({
+                        "payloadStatus": {"status": "VALID"},
+                        "payloadId": "0x0000000000000001",
+                    }),
+                    "engine_forkchoiceUpdatedV3" => json!({
+                        "payloadStatus": {"status": "VALID"},
+                        "payloadId": null,
+                    }),
+                    "engine_getPayloadV3" => json!({
+                        "executionPayload": {
+                            "blockHash": "0x02",
+                            "blockNumber": "0x2",
+                            "timestamp": "0xffffffff",
+                            "gasUsed": "0x0",
+                            "transactions": [],
+                        },
+                        "blobsBundle": {
+                            "commitments": [format!("0xc0{}", "00".repeat(47))],
+                            "proofs": [],
+                            "blobs": [],
+                        },
+                    }),
+                    "engine_newPayloadV3" => {
+                        *record.lock().unwrap() = Some(call["params"][1].clone());
+                        json!({"status": "VALID"})
+                    }
+                    other => panic!("the producer called something unexpected: {other}"),
+                };
+                let reply = json!({"jsonrpc": "2.0", "id": 1, "result": result}).to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+                socket.write_all(response.as_bytes()).unwrap();
+            }
+        });
+
+        let producer = Producer::new(Config {
+            engine_url: format!("http://{address}"),
+            build_delay: Duration::ZERO,
+            ..Config::default()
+        });
+        let parent = Head {
+            hash: "0x01".to_string(),
+            number: 1,
+            timestamp: 1,
+        };
+        producer.produce_block(&parent).await.expect("a block");
+
+        assert_eq!(
+            sent.lock().unwrap().clone(),
+            Some(json!([
+                "0x010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c444014"
+            ])),
+            "engine_newPayloadV3 must be told the blob hashes, not an empty list"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_http_refusal_is_reported_rather_than_misparsed() {
+        use std::io::{Read, Write};
+
+        // A stand-in for geth refusing a token: 401 and a plain-text reason.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request);
+            let body = "signature is invalid";
+            let reply = format!(
+                "HTTP/1.1 401 Unauthorized\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(reply.as_bytes()).unwrap();
+        });
+
+        let producer = Producer::new(Config {
+            engine_url: format!("http://{address}"),
+            ..Config::default()
+        });
+        let said = producer
+            .rpc_call("engine_exchangeCapabilities", json!([]), true)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(said.contains("401"), "{said}");
+        assert!(said.contains("signature is invalid"), "{said}");
+        assert!(
+            said.contains("jwt.hex"),
+            "a 401 should point at the secret: {said}"
+        );
+        assert!(!said.contains("decoding"), "{said}");
     }
 
     #[test]

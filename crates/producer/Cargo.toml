@@ -18,5 +18,7 @@ rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# EIP-4844 versioned hashes. Already in the tree through alloy, so no new download.
+sha2 = "0.10"
 thiserror.workspace = true
 tokio.workspace = true
