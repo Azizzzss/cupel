@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import {
   LAB,
   NETWORK,
@@ -10,7 +10,7 @@ import {
   type Mode,
 } from '../api/chain'
 import { controlHealth } from '../api/control'
-import { CLOSED } from '../live/state'
+import { useNewHeads } from '../live/useNewHeads'
 import { usePoll } from '../usePoll'
 import { ChainContext, type ChainState } from './context'
 import { useFeed } from './useFeed'
@@ -29,6 +29,11 @@ async function probed(): Promise<Answer<Mode>> {
  * the page is asked first, because it knows; the ports are probed only when it
  * does not answer — a dev server with nothing behind it, or a page opened from
  * a file.
+ *
+ * The head is polled and, where the node publishes a socket, announced: the
+ * socket rings, the poll asks at once, and the interval stretches while the
+ * socket stays open. The socket is never the data path — in lab mode the block
+ * still comes through the gateway, whose counters then keep meaning something.
  */
 export function ChainProvider({ children }: { children: ReactNode }) {
   const control = usePoll(controlHealth, 4000, [])
@@ -43,7 +48,14 @@ export function ChainProvider({ children }: { children: ReactNode }) {
   const enabled = feed !== undefined
   const rpc = feed?.rpc ?? ''
 
-  const head = usePoll(() => executionHead(rpc), 1500, [rpc], enabled)
+  const askHead = useRef<() => void>(() => {})
+  const live = useNewHeads(enabled ? feed?.ws : undefined, () => askHead.current())
+  const open = live.status === 'open'
+  const head = usePoll(() => executionHead(rpc), open ? 10_000 : 1500, [rpc], enabled)
+  useEffect(() => {
+    askHead.current = head.refresh
+  }, [head.refresh])
+
   const chainId = usePoll(() => chainIdOf(rpc), 10_000, [rpc], enabled)
   const gateway = usePoll(() => gatewayHealth(), 2000, [], enabled)
   const blocks = useFeed(enabled ? rpc : undefined, head.value)
@@ -63,6 +75,17 @@ export function ChainProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, refreshes)
 
+  // A tab in the background has its timers slowed to about one a minute, so
+  // the first thing a returning reader would see is a page gone stale. Ask
+  // everything the moment the tab is looked at again.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refreshAll()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [refreshAll])
+
   const value = useMemo<ChainState>(
     () => ({
       mode,
@@ -70,14 +93,14 @@ export function ChainProvider({ children }: { children: ReactNode }) {
       feed,
       control,
       chainId,
-      head,
+      head: { ...head, transport: open ? 'live' : 'polling' },
       blocks,
       gateway,
       nodes: network ? [node1, node2, node3] : [],
-      live: CLOSED,
+      live,
       refreshAll,
     }),
-    [mode, settled, feed, control, chainId, head, blocks, gateway, network, node1, node2, node3, refreshAll],
+    [mode, settled, feed, control, chainId, head, open, blocks, gateway, network, node1, node2, node3, live, refreshAll],
   )
 
   return <ChainContext.Provider value={value}>{children}</ChainContext.Provider>

@@ -1,6 +1,7 @@
+import { useEffect, useRef } from 'react'
 import { beaconState, executionHead, type Answer, type NodeTarget } from '../api/chain'
 import type { Row } from '../lib/verdict'
-import { CLOSED } from '../live/state'
+import { useBeaconEvents } from '../live/useBeaconEvents'
 import { usePoll } from '../usePoll'
 import type { NodeState } from './context'
 
@@ -25,8 +26,20 @@ async function readRow(target: NodeTarget): Promise<Answer<Row>> {
   }
 }
 
-/** One of network mode's nodes, polled while there is a network to ask. */
+/**
+ * One of network mode's nodes, polled while there is a network to ask — and
+ * re-read the moment its beacon node announces a head or a finalised
+ * checkpoint, with the poll stretched while that stream is open.
+ */
 export function useNode(target: NodeTarget, enabled: boolean): NodeState {
-  const row = usePoll(() => readRow(target), 2000, [target.rpc], enabled)
-  return { target, row, live: CLOSED }
+  const ask = useRef<() => void>(() => {})
+  const live = useBeaconEvents(enabled ? target.beacon : undefined, () => ask.current())
+  const open = live.status === 'open'
+  const row = usePoll(() => readRow(target), open ? 15_000 : 2000, [target.rpc], enabled)
+
+  useEffect(() => {
+    ask.current = row.refresh
+  }, [row.refresh])
+
+  return { target, row: { ...row, transport: open ? 'live' : 'polling' }, live }
 }
