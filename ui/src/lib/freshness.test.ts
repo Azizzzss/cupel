@@ -58,9 +58,11 @@ describe('worst', () => {
     expect(worst([fresh, older], NOW)).toEqual({ kind: 'fresh', ageMs: 3000 })
   })
 
-  it('lets never outrank fresh, and stale outrank never', () => {
-    expect(worst([fresh, never], NOW).kind).toBe('never')
+  it('ignores a source that never answered while others have', () => {
+    // A node that is down is its panel's story, not the page's.
+    expect(worst([fresh, never], NOW)).toEqual({ kind: 'fresh', ageMs: 100 })
     expect(worst([never, stale, fresh], NOW).kind).toBe('stale')
+    expect(worst([never, never], NOW)).toEqual({ kind: 'never' })
   })
 
   it('picks the stalest of the stale', () => {

@@ -109,13 +109,225 @@ button {
 
 /* ----------------------------------------------------------------- layout */
 
-.app {
-  max-width: 84rem;
+/* The strip across the top, the pages down the side, the page itself. */
+.shell {
+  max-width: 96rem;
   margin: 0 auto;
-  padding: clamp(1rem, 3vw, 2rem) clamp(1rem, 3vw, 2.5rem) 4rem;
+  padding: 0 clamp(1rem, 3vw, 2.5rem) 4rem;
+  display: grid;
+  grid-template-columns: 12rem minmax(0, 1fr);
+  grid-template-areas:
+    'strip strip'
+    'nav main';
+  column-gap: 2rem;
+  row-gap: 1.5rem;
+}
+
+.page {
+  grid-area: main;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+.page-head h1 {
+  font-size: 1.7rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ------------------------------------------------------------------ strip */
+
+.strip {
+  grid-area: strip;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+  padding: 0.75rem 0;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.brand {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: -0.01em;
+  color: inherit;
+  text-decoration: none;
+}
+
+.strip-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.strip-label {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.strip-value {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.strip-link {
+  text-decoration: none;
+}
+
+/* -------------------------------------------------------------------- nav */
+
+.nav {
+  grid-area: nav;
+  align-self: start;
+  position: sticky;
+  top: 4.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.nav-link {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-left: 2px solid transparent;
+  border-radius: 0 4px 4px 0;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.nav-link:hover {
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.nav-link.active {
+  color: var(--ink);
+  border-left-color: var(--glow);
+  font-weight: 600;
+}
+
+.nav-link.unavailable {
+  color: var(--faint);
+}
+
+.nav-hint {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+@media (max-width: 60rem) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'strip'
+      'nav'
+      'main';
+  }
+
+  .nav {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 0.4rem;
+  }
+
+  .nav-link {
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 4px 4px 0 0;
+    white-space: nowrap;
+  }
+
+  .nav-link.active {
+    border-bottom-color: var(--glow);
+  }
+}
+
+/* --------------------------------------------------------------- segmented */
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.segmented button {
+  background: transparent;
+  border: 0;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmented button + button {
+  border-left: 1px solid var(--rule);
+}
+
+.segmented button[aria-pressed='true'] {
+  color: var(--glow);
+  background: var(--surface-2);
+}
+
+/* --------------------------------------------------------------- key/value */
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.4rem 1.2rem;
+  margin: 0;
+  font-size: 0.87rem;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.wrap {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.plain {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--rule);
+  text-underline-offset: 0.15em;
+}
+
+a.plain:hover {
+  text-decoration-color: var(--glow);
 }
 
 .grid {
@@ -370,6 +582,11 @@ table.plain td.num {
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+a.button {
+  display: inline-block;
+  text-decoration: none;
 }
 
 .button:hover:not(:disabled) {

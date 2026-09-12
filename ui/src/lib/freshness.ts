@@ -61,27 +61,31 @@ export function staleClass(f: Freshness, base = 'panel-body'): string {
 /**
  * The worst of several sources, for a summary that must not flatter.
  *
- * Stale beats never beats fresh; among stale or fresh, the oldest answer.
+ * Stale beats fresh, and among either the oldest answer wins. A source that
+ * has never answered is a different thing from one that stopped — a node that
+ * is down is the panel's story, not the page's — so it counts only when
+ * nothing at all has answered yet.
  */
 export function worst(sources: Pick<Source<unknown>, 'lastOk' | 'error' | 'intervalMs'>[], now: number): Freshness {
-  let result: Freshness = { kind: 'never' }
-  let first = true
+  let result: Freshness | undefined
   for (const source of sources) {
     const candidate = freshness(source, now)
-    if (first || rank(candidate) > rank(result) || (rank(candidate) === rank(result) && olderThan(candidate, result))) {
+    if (candidate.kind === 'never') continue
+    if (
+      result === undefined ||
+      rank(candidate) > rank(result) ||
+      (rank(candidate) === rank(result) && candidate.ageMs > ageOf(result))
+    ) {
       result = candidate
     }
-    first = false
   }
-  return result
+  return result ?? { kind: 'never' }
 }
 
 function rank(f: Freshness): number {
-  return f.kind === 'stale' ? 2 : f.kind === 'never' ? 1 : 0
+  return f.kind === 'stale' ? 1 : 0
 }
 
-function olderThan(a: Freshness, b: Freshness): boolean {
-  const ageA = 'ageMs' in a ? a.ageMs : 0
-  const ageB = 'ageMs' in b ? b.ageMs : 0
-  return ageA > ageB
+function ageOf(f: Freshness): number {
+  return f.kind === 'never' ? 0 : f.ageMs
 }

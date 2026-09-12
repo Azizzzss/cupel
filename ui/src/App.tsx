@@ -1,15 +1,10 @@
-import { Overview } from './pages/Overview'
-import { ErrorBoundary } from './shell/ErrorBoundary'
+import { Shell } from './shell/Shell'
 import { ChainProvider } from './store/ChainProvider'
 
 export default function App() {
   return (
     <ChainProvider>
-      <div className="app">
-        <ErrorBoundary>
-          <Overview />
-        </ErrorBoundary>
-      </div>
+      <Shell />
     </ChainProvider>
   )
 }

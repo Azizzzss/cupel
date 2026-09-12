@@ -1,28 +1,15 @@
-import { VIEWING_LOCALLY, type Mode } from '../api/chain'
+import { VIEWING_LOCALLY } from '../api/chain'
 import { Agreement } from '../components/Agreement'
 import { BlockFeed } from '../components/BlockFeed'
 import { Gateway } from '../components/Gateway'
 import { SlotClock } from '../components/SlotClock'
-import { Walkthrough } from '../components/Walkthrough'
+import { PageHead } from '../shell/PageHead'
 import { useChain } from '../store/context'
 
 export function Overview() {
   const { mode, settled } = useChain()
-  return (
-    <>
-      <Header mode={mode} settled={settled} />
-      <Elsewhere />
-      {mode === 'network' && <NetworkView />}
-      {mode === 'lab' && <LabView />}
-      {mode === 'none' && settled && <Nothing />}
-    </>
-  )
-}
 
-function Header({ mode, settled }: { mode: Mode; settled: boolean }) {
-  const { chainId } = useChain()
-
-  const label =
+  const lede =
     mode === 'network'
       ? 'network mode — nine containers, three consensus clients'
       : mode === 'lab'
@@ -32,21 +19,13 @@ function Header({ mode, settled }: { mode: Mode; settled: boolean }) {
           : 'looking for a chain…'
 
   return (
-    <header className="stack" style={{ gap: '0.4rem' }}>
-      <p className="eyebrow">Cupel · control room</p>
-      <div className="row">
-        <h1 style={{ fontSize: '1.9rem', fontWeight: 700, letterSpacing: '-0.01em' }}>
-          {mode === 'none' ? 'Nothing is running' : 'Watching the chain'}
-        </h1>
-        <span className="spacer" />
-        {chainId.value !== undefined && (
-          <span className="panel-note mono">chain id {chainId.value}</span>
-        )}
-      </div>
-      <p className="dim" style={{ fontSize: '0.9rem' }}>
-        {label}
-      </p>
-    </header>
+    <>
+      <PageHead title={mode === 'none' ? 'Nothing is running' : 'Watching the chain'} lede={lede} />
+      <Elsewhere />
+      {mode === 'network' && <NetworkView />}
+      {mode === 'lab' && <LabView />}
+      {mode === 'none' && settled && <Nothing />}
+    </>
   )
 }
 
@@ -72,7 +51,7 @@ function NetworkView() {
  * ask for a block, so there is no button, and the reason is the interesting
  * part rather than an apology for a missing control.
  */
-function NobodyInCharge() {
+export function NobodyInCharge() {
   return (
     <section className="panel">
       <div className="panel-head">
@@ -105,7 +84,22 @@ function LabView() {
         <BlockFeed />
         <Gateway />
       </div>
-      <Walkthrough />
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Make a block, and watch what it took</h2>
+          <a className="button" href="#/walkthrough">
+            Open the walkthrough
+          </a>
+        </div>
+        <div className="panel-body">
+          <p className="dim" style={{ margin: 0, fontSize: '0.88rem' }}>
+            Since the merge a node is two programs, and they talk over one
+            authenticated port, four calls per block. The walkthrough runs that
+            sequence on your chain — a real block, which the chain keeps — and
+            shows what went over the wire.
+          </p>
+        </div>
+      </section>
       <section className="panel">
         <div className="panel-head">
           <h2>No consensus here, and that is the trade</h2>
