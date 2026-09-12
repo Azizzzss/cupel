@@ -202,6 +202,30 @@ mod tests {
     }
 
     #[test]
+    fn the_page_knows_the_same_addresses() {
+        // The control room names these addresses without asking the chain,
+        // because nothing can move a contract placed in genesis and the four
+        // accounts are the ones every development tool already knows. Two
+        // files in two languages that must agree; a change here the page did
+        // not follow would show a stranger's balance under a familiar name.
+        let page = include_str!("../../../ui/src/lib/known.ts");
+        for contract in CONTRACTS {
+            assert!(
+                page.contains(contract.address),
+                "ui/src/lib/known.ts does not know {} at {}",
+                contract.name,
+                contract.address
+            );
+        }
+        for (address, _) in crate::DEV_ACCOUNTS {
+            assert!(
+                page.contains(address),
+                "ui/src/lib/known.ts does not know the account {address}"
+            );
+        }
+    }
+
+    #[test]
     fn sorting_is_stable() {
         let mut alloc = Map::new();
         alloc.insert("0xff".into(), json!({}));

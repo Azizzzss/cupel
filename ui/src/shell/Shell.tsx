@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { Mode } from '../api/chain'
 import { pageTitle } from '../lib/title'
+import { Accounts } from '../pages/Accounts'
 import { Block } from '../pages/Block'
 import { Blocks } from '../pages/Blocks'
 import { Consensus } from '../pages/Consensus'
@@ -59,6 +60,8 @@ function Page({ route, mode, settled }: { route: Route; mode: Mode; settled: boo
       return <Block number={route.number} />
     case 'tx':
       return <Tx hash={route.hash} />
+    case 'accounts':
+      return <Accounts />
     case 'gateway':
       return <GatewayPage />
     case 'consensus':

@@ -12,6 +12,7 @@ interface Item {
 const ITEMS: Item[] = [
   { page: 'overview', label: 'Overview', hash: '#/' },
   { page: 'blocks', label: 'Blocks', hash: '#/blocks' },
+  { page: 'accounts', label: 'Accounts', hash: '#/accounts' },
   { page: 'gateway', label: 'Gateway', hash: '#/gateway' },
   { page: 'consensus', label: 'Consensus', hash: '#/consensus', needs: 'network' },
   { page: 'walkthrough', label: 'Walkthrough', hash: '#/walkthrough', needs: 'lab' },
