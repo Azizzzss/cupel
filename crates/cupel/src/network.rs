@@ -1233,6 +1233,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn every_execution_node_publishes_its_websocket() {
+        // The control room subscribes to `newHeads` over a socket, and geth
+        // refuses a browser origin it was not told about — which looks from
+        // the page like a socket that closes the moment it opens. The flags
+        // live in the shared command block; the port each node publishes is
+        // its own, one above the JSON-RPC block.
+        let compose = include_str!("../../../compose/network.yml");
+        for flag in ["--ws --ws.addr 0.0.0.0 --ws.port 8546", "--ws.origins '*'"] {
+            assert!(
+                compose.contains(flag),
+                "compose/network.yml does not pass {flag}"
+            );
+        }
+        for (index, port) in [(1, 8558), (2, 8559), (3, 8560)] {
+            let service = compose
+                .split("\n  el")
+                .find(|service| service.starts_with(&format!("{index}:")))
+                .unwrap_or_else(|| panic!("compose/network.yml has no service el{index}"));
+            let mapping = format!("\"127.0.0.1:{port}:8546\"");
+            assert!(
+                service.contains(&mapping),
+                "el{index} does not publish its websocket on {port}"
+            );
+        }
+    }
+
     /// The text between two markers, if both are present in order.
     fn between<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
         let start = haystack.find(open)? + open.len();

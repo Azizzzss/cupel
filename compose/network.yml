@@ -58,6 +58,9 @@ x-geth: &geth
         --http --http.addr 0.0.0.0 --http.port 8545 \
         --http.api eth,net,web3,debug,txpool,admin \
         --http.corsdomain '*' --http.vhosts '*' \
+        --ws --ws.addr 0.0.0.0 --ws.port 8546 \
+        --ws.api eth,net,web3,debug,txpool \
+        --ws.origins '*' \
         --authrpc.addr 0.0.0.0 --authrpc.port 8551 --authrpc.vhosts '*' \
         --authrpc.jwtsecret /jwt/jwtsecret \
         --miner.gasprice 1 \
@@ -114,6 +117,10 @@ services:
       - el1-data:/data
     ports:
       - "127.0.0.1:8555:8545"
+      # The WebSocket, for the control room's `newHeads` subscription: the
+      # page hears about a block the moment this node has it, and fetches it
+      # over HTTP as before. 8558-8560 for the three nodes.
+      - "127.0.0.1:8558:8546"
       - "127.0.0.1:6061:6060"
     networks:
       cupel:
@@ -226,6 +233,7 @@ services:
       - el2-data:/data
     ports:
       - "127.0.0.1:8556:8545"
+      - "127.0.0.1:8559:8546"
       - "127.0.0.1:6062:6060"
     networks:
       cupel:
@@ -342,6 +350,7 @@ services:
       - el3-data:/data
     ports:
       - "127.0.0.1:8557:8545"
+      - "127.0.0.1:8560:8546"
       - "127.0.0.1:6063:6060"
     networks:
       cupel:

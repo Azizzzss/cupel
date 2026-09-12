@@ -38,26 +38,37 @@ export const VIEWING_LOCALLY = ['', 'localhost', '127.0.0.1', '[::1]'].includes(
 /** The gateway, at the host this page was served from. */
 export const GATEWAY = `http://${VIEWING_LOCALLY ? '127.0.0.1' : window.location.hostname}:8545`
 
-/** Lab mode: one node behind the gateway, driven by a producer on the host. */
-export const LAB: NodeTarget[] = [{ name: 'lab', rpc: GATEWAY }]
+/**
+ * Lab mode: one node behind the gateway, driven by a producer on the host.
+ *
+ * The socket is the node's own, not the gateway's — the gateway speaks HTTP
+ * only — and it is published on 127.0.0.1 like every client port, so it is
+ * offered only when the page is opened on the machine running Cupel.
+ */
+export const LAB: NodeTarget[] = [
+  { name: 'lab', rpc: GATEWAY, ws: VIEWING_LOCALLY ? 'ws://127.0.0.1:8547' : undefined },
+]
 
 /** Network mode: three execution clients, three different consensus clients. */
 export const NETWORK: NodeTarget[] = [
   {
     name: 'node1',
     rpc: 'http://127.0.0.1:8555',
+    ws: 'ws://127.0.0.1:8558',
     beacon: 'http://127.0.0.1:5052',
     consensus: 'Lighthouse',
   },
   {
     name: 'node2',
     rpc: 'http://127.0.0.1:8556',
+    ws: 'ws://127.0.0.1:8559',
     beacon: 'http://127.0.0.1:5152',
     consensus: 'Prysm',
   },
   {
     name: 'node3',
     rpc: 'http://127.0.0.1:8557',
+    ws: 'ws://127.0.0.1:8560',
     beacon: 'http://127.0.0.1:5252',
     consensus: 'Teku',
   },
