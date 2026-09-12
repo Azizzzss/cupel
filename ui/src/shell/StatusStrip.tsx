@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Transport } from '../components/Stale'
 import { ago } from '../lib/format'
-import { freshness, worst, type Freshness, type Source } from '../lib/freshness'
+import { freshest, freshness, worst, type Freshness, type Source } from '../lib/freshness'
 import { slotView, timing } from '../lib/slots'
 import { clockReading } from '../store/select'
 import { useChain } from '../store/context'
@@ -20,7 +20,10 @@ export function StatusStrip() {
   const now = useNow(1000)
 
   const sources: Source<unknown>[] = [head, gateway, chainId, ...nodes.map((node) => node.row)]
+  // Stale is judged from the worst source; "answered" names the most recent
+  // one, because that is the question the words ask.
   const overall = mode === 'none' ? undefined : worst(sources, now)
+  const recent = freshest(sources, now)
   const allStale =
     sources.length > 0 && sources.every((source) => freshness(source, now).kind === 'stale')
 
@@ -53,7 +56,15 @@ export function StatusStrip() {
       <Item label="chain id" value={chainId.value !== undefined ? String(chainId.value) : '—'} />
       <Item
         label="head"
-        value={head.value ? `#${head.value.number}` : '—'}
+        value={
+          head.value ? (
+            <a className="plain" href={`#/block/${head.value.number}`}>
+              #{head.value.number}
+            </a>
+          ) : (
+            '—'
+          )
+        }
         extra={mode === 'none' ? undefined : <Transport live={live.status === 'open'} />}
       />
       {clock && <Item label="slot · epoch" value={`${clock.clockSlot} · ${clock.epoch}`} />}
@@ -65,7 +76,7 @@ export function StatusStrip() {
           </span>
         </a>
       )}
-      {overall && <FreshnessPill f={overall} everyStale={allStale} />}
+      {overall && <FreshnessPill f={overall} recentMs={recent} everyStale={allStale} />}
       <span className="spacer" />
       <span className="panel-note mono">
         {version ? `v${version}` : control.error ? 'control room not answering' : ''}
@@ -75,7 +86,7 @@ export function StatusStrip() {
   )
 }
 
-function Item({ label, value, extra }: { label: string; value: string; extra?: ReactNode }) {
+function Item({ label, value, extra }: { label: string; value: ReactNode; extra?: ReactNode }) {
   return (
     <span className="strip-item">
       <span className="strip-label">{label}</span>
@@ -87,7 +98,15 @@ function Item({ label, value, extra }: { label: string; value: string; extra?: R
   )
 }
 
-function FreshnessPill({ f, everyStale }: { f: Freshness; everyStale: boolean }) {
+function FreshnessPill({
+  f,
+  recentMs,
+  everyStale,
+}: {
+  f: Freshness
+  recentMs: number | undefined
+  everyStale: boolean
+}) {
   if (f.kind === 'never') {
     return (
       <span className="pill pill-idle">
@@ -100,7 +119,7 @@ function FreshnessPill({ f, everyStale }: { f: Freshness; everyStale: boolean })
     return (
       <span className="pill pill-agree">
         <span className="dot" />
-        answered {ago(f.ageMs)} ago
+        answered {ago(recentMs ?? f.ageMs)} ago
       </span>
     )
   }

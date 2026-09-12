@@ -2,6 +2,7 @@ import { age, shortHash } from '../lib/format'
 import { staleClass } from '../lib/freshness'
 import { useChain } from '../store/context'
 import { useFreshness, useNow } from '../usePoll'
+import { BlockLink } from './Entity'
 import { StaleNote, Transport } from './Stale'
 
 /**
@@ -22,7 +23,9 @@ export function BlockFeed({ limit = 12 }: { limit?: number }) {
         <h2>Blocks, as they arrive</h2>
         <span className="row" style={{ gap: '0.5rem' }}>
           <Transport live={live.status === 'open'} />
-          <span className="panel-note">newest first</span>
+          <a className="plain panel-note" href="#/blocks">
+            all of them
+          </a>
         </span>
       </div>
       <div className={staleClass(freshness, 'panel-body scroll-x')}>
@@ -42,7 +45,9 @@ export function BlockFeed({ limit = 12 }: { limit?: number }) {
             <tbody>
               {shown.map((block) => (
                 <tr key={block.hash || block.number}>
-                  <td className="num name">{block.number}</td>
+                  <td className="name">
+                    <BlockLink number={block.number} />
+                  </td>
                   <td className="num faint">{shortHash(block.hash, 10)}</td>
                   <td
                     className="num"

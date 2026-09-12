@@ -82,6 +82,20 @@ export function worst(sources: Pick<Source<unknown>, 'lastOk' | 'error' | 'inter
   return result ?? { kind: 'never' }
 }
 
+/** How recently anything answered, in milliseconds; undefined until something has. */
+export function freshest(
+  sources: Pick<Source<unknown>, 'lastOk' | 'error' | 'intervalMs'>[],
+  now: number,
+): number | undefined {
+  let best: number | undefined
+  for (const source of sources) {
+    if (source.lastOk === undefined) continue
+    const age = Math.max(0, now - source.lastOk)
+    if (best === undefined || age < best) best = age
+  }
+  return best
+}
+
 function rank(f: Freshness): number {
   return f.kind === 'stale' ? 1 : 0
 }

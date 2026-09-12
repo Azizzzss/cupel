@@ -1,10 +1,13 @@
 import { useEffect } from 'react'
 import type { Mode } from '../api/chain'
 import { pageTitle } from '../lib/title'
+import { Block } from '../pages/Block'
+import { Blocks } from '../pages/Blocks'
 import { Consensus } from '../pages/Consensus'
 import { GatewayPage } from '../pages/GatewayPage'
 import { Missing } from '../pages/Missing'
 import { Overview } from '../pages/Overview'
+import { Tx } from '../pages/Tx'
 import { WalkthroughPage } from '../pages/WalkthroughPage'
 import { WrongMode } from '../pages/WrongMode'
 import { available, toHash, useRoute, type Route } from '../router'
@@ -50,6 +53,12 @@ function Page({ route, mode, settled }: { route: Route; mode: Mode; settled: boo
   switch (route.page) {
     case 'overview':
       return <Overview />
+    case 'blocks':
+      return <Blocks />
+    case 'block':
+      return <Block number={route.number} />
+    case 'tx':
+      return <Tx hash={route.hash} />
     case 'gateway':
       return <GatewayPage />
     case 'consensus':

@@ -11,6 +11,7 @@ interface Item {
 
 const ITEMS: Item[] = [
   { page: 'overview', label: 'Overview', hash: '#/' },
+  { page: 'blocks', label: 'Blocks', hash: '#/blocks' },
   { page: 'gateway', label: 'Gateway', hash: '#/gateway' },
   { page: 'consensus', label: 'Consensus', hash: '#/consensus', needs: 'network' },
   { page: 'walkthrough', label: 'Walkthrough', hash: '#/walkthrough', needs: 'lab' },
@@ -28,7 +29,9 @@ export function Nav({ route, mode }: { route: Route; mode: Mode }) {
   return (
     <nav className="nav" aria-label="pages">
       {ITEMS.map((item) => {
-        const active = route.page === item.page
+        // A block or a transaction is somewhere under Blocks.
+        const under = route.page === 'block' || route.page === 'tx' ? 'blocks' : route.page
+        const active = under === item.page
         const ok = available(item.page, mode)
         const classes = ['nav-link', active ? 'active' : '', ok ? '' : 'unavailable']
         return (

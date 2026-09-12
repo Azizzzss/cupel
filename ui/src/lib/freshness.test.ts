@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { freshness, staleAfter, worst } from './freshness'
+import { freshest, freshness, staleAfter, worst } from './freshness'
 
 const NOW = 1_000_000
 
@@ -71,5 +71,11 @@ describe('worst', () => {
 
   it('is never with nothing to look at', () => {
     expect(worst([], NOW)).toEqual({ kind: 'never' })
+  })
+
+  it('knows the most recent answer too', () => {
+    expect(freshest([older, fresh, never], NOW)).toBe(100)
+    expect(freshest([never], NOW)).toBeUndefined()
+    expect(freshest([{ intervalMs: 1500, lastOk: NOW + 50 }], NOW)).toBe(0)
   })
 })
