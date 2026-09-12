@@ -1,5 +1,9 @@
+import type { ReactNode } from 'react'
 import { NETWORK, beaconState, type BeaconState } from '../api/chain'
+import { mmss } from '../lib/format'
+import { finalityNote, slotView, timing } from '../lib/slots'
 import { useNow, usePoll } from '../usePoll'
+import { Field } from './Field'
 
 interface Reading {
   node: string
@@ -45,10 +49,11 @@ export function SlotClock() {
     )
   }
 
-  const { secondsPerSlot, slotsPerEpoch, genesisTime, headSlot, justified, finalized } = data.state
+  const { headSlot, justified, finalized } = data.state
   const via = `via ${data.consensus} (${data.node})`
+  const t = timing(data.state)
 
-  if (secondsPerSlot === undefined || slotsPerEpoch === undefined || genesisTime === undefined) {
+  if (!t) {
     return (
       <Panel note={via}>
         <span className="faint">
@@ -60,50 +65,24 @@ export function SlotClock() {
     )
   }
 
-  // The slot the wall clock is in, which is not the same as the slot the chain
-  // has a block for — the gap between them is exactly what a missed slot is.
-  const elapsed = Math.max(0, Math.floor(now / 1000) - genesisTime)
-  const clockSlot = Math.floor(elapsed / secondsPerSlot)
-  const intoSlot = elapsed % secondsPerSlot
-  const epoch = Math.floor(clockSlot / slotsPerEpoch)
-  const intoEpoch = clockSlot % slotsPerEpoch
-  const behind = clockSlot - headSlot
-
-  const epochSeconds = secondsPerSlot * slotsPerEpoch
-  const untilEpoch = epochSeconds - (elapsed % epochSeconds)
-
-  // Finality normally trails the clock by two epochs, occasionally three. Past
-  // that it has stopped, and saying "irreversible" beside a number that is not
-  // moving hides the most interesting thing this devnet can show. The first
-  // finalised epoch is due four epochs in; after that it is overdue, which is
-  // different from "about now away", the message this used to show for ever.
-  const firstDue = 4 * epochSeconds - elapsed
-  const lag = epoch - finalized
-  const finalNote =
-    finalized === 0
-      ? firstDue > 0
-        ? `first one about ${mmss(firstDue)} away`
-        : `overdue by ${mmss(-firstDue)} — finality needs more than two thirds of the stake attesting`
-      : lag > 3
-        ? `${lag} epochs behind the clock — finality has stalled`
-        : 'irreversible'
+  const view = slotView(now, t, headSlot, finalized)
 
   return (
-    <Panel note={`${secondsPerSlot}s slots · ${slotsPerEpoch} per epoch · ${via}`}>
+    <Panel note={`${t.secondsPerSlot}s slots · ${t.slotsPerEpoch} per epoch · ${via}`}>
       <div className="tight">
-        <Field label="Slot" value={`${clockSlot}`} note={`${intoSlot}s in`} />
+        <Field label="Slot" value={`${view.clockSlot}`} note={`${view.intoSlot}s in`} />
         <Field
           label="Epoch"
-          value={`${epoch}`}
-          note={`slot ${intoEpoch} of ${slotsPerEpoch} · next in ${mmss(untilEpoch)}`}
+          value={`${view.epoch}`}
+          note={`slot ${view.intoEpoch} of ${t.slotsPerEpoch} · next in ${mmss(view.untilEpoch)}`}
         />
         <Field
           label="Head"
           value={`${headSlot}`}
-          note={behind <= 1 ? 'keeping time' : `${behind} slots behind the clock`}
+          note={view.behind <= 1 ? 'keeping time' : `${view.behind} slots behind the clock`}
         />
         <Field label="Justified epoch" value={`${justified}`} />
-        <Field label="Finalised epoch" value={`${finalized}`} note={finalNote} />
+        <Field label="Finalised epoch" value={`${finalized}`} note={finalityNote(view, finalized)} />
         <p className="panel-note" style={{ marginTop: '0.5rem' }}>
           A slot is a fixed opportunity for one validator to propose; it passes
           whether or not they do. Finality trails the head by roughly two
@@ -115,7 +94,7 @@ export function SlotClock() {
   )
 }
 
-function Panel({ note, children }: { note?: string; children: React.ReactNode }) {
+function Panel({ note, children }: { note?: string; children: ReactNode }) {
   return (
     <section className="panel">
       <div className="panel-head">
@@ -125,23 +104,4 @@ function Panel({ note, children }: { note?: string; children: React.ReactNode })
       <div className="panel-body">{children}</div>
     </section>
   )
-}
-
-function Field({ label, value, note }: { label: string; value: string; note?: string }) {
-  return (
-    <div className="field">
-      <span className="field-label">{label}</span>
-      <span className="row" style={{ gap: '0.5rem' }}>
-        {note && <span className="panel-note">{note}</span>}
-        <span className="field-value">{value}</span>
-      </span>
-    </div>
-  )
-}
-
-function mmss(seconds: number): string {
-  if (seconds <= 0) return 'now'
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
-  return m > 0 ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`
 }

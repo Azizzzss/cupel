@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { blockByNumber, executionHead, type ExecutionHead } from '../api/chain'
 import { merge } from '../lib/blocks'
-import { usePoll } from '../usePoll'
+import { age, shortHash } from '../lib/format'
+import { useNow, usePoll } from '../usePoll'
 
 const KEEP = 12
 
@@ -21,6 +22,7 @@ export function BlockFeed({ rpc }: { rpc: string }) {
   const backfilling = useRef(false)
 
   const { data: head } = usePoll(() => executionHead(rpc), 1500, [rpc])
+  const now = useNow(1000)
 
   // Pointing this at a different chain has to clear the list — the same block
   // number then means a different block, and keeping the rows would mix two
@@ -76,9 +78,7 @@ export function BlockFeed({ rpc }: { rpc: string }) {
               {blocks.map((block) => (
                 <tr key={block.hash || block.number}>
                   <td className="num name">{block.number}</td>
-                  <td className="num faint">
-                    {block.hash.slice(0, 10)}…{block.hash.slice(-4)}
-                  </td>
+                  <td className="num faint">{shortHash(block.hash, 10)}</td>
                   <td
                     className="num"
                     style={{ color: block.transactions ? 'var(--glow)' : undefined }}
@@ -86,7 +86,7 @@ export function BlockFeed({ rpc }: { rpc: string }) {
                     {block.transactions}
                   </td>
                   <td className="num faint">{block.gasUsed.toLocaleString()}</td>
-                  <td className="num faint">{age(block.timestamp)}</td>
+                  <td className="num faint">{age(block.timestamp, now)}</td>
                 </tr>
               ))}
             </tbody>
@@ -112,11 +112,4 @@ async function fill(
   }
   const answers = await Promise.all(wanted.map((n) => blockByNumber(rpc, n)))
   set((current) => merge(current, answers.flatMap((a) => (a.ok ? [a.value] : [])), KEEP))
-}
-
-function age(timestamp: number): string {
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000) - timestamp)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h`
 }
