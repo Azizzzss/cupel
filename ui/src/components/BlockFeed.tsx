@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { blockByNumber, executionHead, type ExecutionHead } from '../api/chain'
+import { merge } from '../lib/blocks'
 import { usePoll } from '../usePoll'
 
 const KEEP = 12
@@ -47,7 +48,7 @@ export function BlockFeed({ rpc }: { rpc: string }) {
       if (latest.number - newest > 1) {
         void fill(rpc, newest + 1, latest.number - 1, setBlocks)
       }
-      return merge(current, [latest])
+      return merge(current, [latest], KEEP)
     })
   }, [head, rpc])
 
@@ -110,22 +111,7 @@ async function fill(
     wanted.push(n)
   }
   const answers = await Promise.all(wanted.map((n) => blockByNumber(rpc, n)))
-  set((current) => merge(current, answers.flatMap((a) => (a.ok ? [a.value] : []))))
-}
-
-/**
- * Newest first, one row per block number, capped.
- *
- * Pure on purpose. This runs inside a state updater, and React invokes those
- * more than once — twice on every update under StrictMode. An earlier version
- * recorded which blocks it had seen in a ref from in here, so the second
- * invocation saw the first one's bookkeeping and discarded everything it had
- * just added: the requests all succeeded, and the panel showed one row.
- */
-function merge(current: ExecutionHead[], found: ExecutionHead[]): ExecutionHead[] {
-  const byNumber = new Map<number, ExecutionHead>()
-  for (const block of [...current, ...found]) byNumber.set(block.number, block)
-  return [...byNumber.values()].sort((a, b) => b.number - a.number).slice(0, KEEP)
+  set((current) => merge(current, answers.flatMap((a) => (a.ok ? [a.value] : [])), KEEP))
 }
 
 function age(timestamp: number): string {

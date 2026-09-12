@@ -1,5 +1,5 @@
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 // Built assets are embedded into the `cupel` binary and served from whatever
 // path the control plane chooses, so every URL in the output has to be
@@ -27,5 +27,13 @@ export default defineConfig({
   },
   preview: {
     proxy: { '/api': 'http://127.0.0.1:8544' },
+  },
+  test: {
+    // The tests are for the arithmetic — verdicts, slot maths, ABI decoding,
+    // formatting — none of which needs a DOM. Keeping them in `src` means
+    // `tsc -b` type-checks them like everything else; nothing imports them, so
+    // the bundle never sees them.
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
   },
 })

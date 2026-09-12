@@ -98,6 +98,13 @@ jobs:
         run: npx tsc -b --noEmit
         working-directory: ui
 
+      - name: Tests
+        # The page's arithmetic: which verdict three clients earn, where the
+        # wall clock is in slots and epochs, how a hex word becomes a name or a
+        # balance. All of it pure, none of it needing a browser.
+        run: npm test
+        working-directory: ui
+
       - name: The committed bundle matches its source
         # `ui/dist` is a build output kept in the repository, because it is
         # compiled into the binary with rust-embed. That is what lets `cargo
