@@ -421,7 +421,7 @@ fn declared_slot_millis(config: &str) -> Option<u64> {
 // -------------------------------------------------------------- bringing up
 
 /// Bring the devnet up, generating one first if there is no chain to resume.
-pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
+pub(crate) async fn up(root: &Path, detach: bool, listen: std::net::IpAddr) -> Result<()> {
     let dir = root.join("config/network");
 
     // A chain that has already run must keep the genesis it started from. A
@@ -453,7 +453,7 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
     compose(root, &["--profile", "peers"], &["up", "-d"]).await?;
 
     if detach {
-        banner(false);
+        banner(None);
         return Ok(());
     }
 
@@ -477,7 +477,8 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
     // Bound here rather than inside the spawned task, so that a port already
     // held — by lab mode, or by a devnet gateway left running — is reported
     // instead of announced.
-    let listener = crate::bind(crate::GATEWAY_ADDR, "gateway").await?;
+    let gateway_addr = std::net::SocketAddr::new(listen, crate::GATEWAY_PORT).to_string();
+    let listener = crate::bind(&gateway_addr, "gateway").await?;
     let serving = tokio::spawn(cupel_gateway::serve_on(Arc::clone(&gateway), listener));
     let probing = tokio::spawn(Arc::clone(&gateway).probe_forever());
 
@@ -489,13 +490,16 @@ pub(crate) async fn up(root: &Path, detach: bool) -> Result<()> {
     // is by asking the clients rather than by being told.
     //
     // With no producer: see `web::Control`.
-    let control_listener = crate::web::bind(crate::CONTROL_ROOM_ADDR).await?;
+    let control_addr = std::net::SocketAddr::new(listen, crate::CONTROL_ROOM_PORT).to_string();
+    let control_listener = crate::web::bind(&control_addr).await?;
     let control = tokio::spawn(crate::web::serve_on(
         control_listener,
         crate::web::Control { producing: None },
     ));
 
-    banner(true);
+    let gateway_url = crate::url_for(listen, crate::GATEWAY_PORT);
+    let control_url = crate::url_for(listen, crate::CONTROL_ROOM_PORT);
+    banner(Some((&gateway_url, &control_url)));
     tokio::signal::ctrl_c().await.ok();
     println!();
     println!("cupel: the devnet keeps running — `cupel network down` stops it");
@@ -912,16 +916,13 @@ pub(crate) fn stopper_index() -> usize {
         .unwrap_or(0)
 }
 
-fn banner(gateway: bool) {
+fn banner(serving: Option<(&str, &str)>) {
     println!();
     println!("  Cupel network v{}", env!("CARGO_PKG_VERSION"));
     println!("  ---------------------------------------------------");
-    if gateway {
-        println!(
-            "  RPC          {}  (the gateway, across all three)",
-            crate::GATEWAY_URL
-        );
-        println!("  Control room {}", crate::CONTROL_ROOM_URL);
+    if let Some((gateway_url, control_url)) = serving {
+        println!("  RPC          {gateway_url}  (the gateway, across all three)");
+        println!("  Control room {control_url}");
         println!();
     }
     for node in NODES {
@@ -937,7 +938,13 @@ fn banner(gateway: bool) {
     println!();
     println!("  The first finalised epoch is about 25 minutes away.");
     println!("  cupel network status shows what all three think of the chain.");
-    if gateway {
+    if serving.is_none() {
+        println!();
+        println!("  Detached: the gateway and the control room both live in the");
+        println!("  cupel process, so neither is running. The clients' own ports");
+        println!("  above still answer. `cupel network up` brings both up.");
+    }
+    if let Some((gateway_url, _)) = serving {
         println!();
         let held = stake_split();
         let total: usize = held.iter().sum();
@@ -957,7 +964,7 @@ fn banner(gateway: bool) {
             votes_needed()
         );
         println!("    docker stop {DEMO_STOP_CONTAINER}");
-        println!("    curl -s {}/health", crate::GATEWAY_URL);
+        println!("    curl -s {gateway_url}/health");
         println!("    cupel network status");
         println!();
         println!(

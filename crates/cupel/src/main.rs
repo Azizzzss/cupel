@@ -5,7 +5,7 @@
 //! blocks runs here, because since the merge an execution client will not make
 //! one on its own.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -51,15 +51,12 @@ const DEV_ACCOUNTS: [(&str, &str); 4] = [
 /// keep working while the gateway is rate-limiting or refusing requests.
 const NODE_RPC_URL: &str = "http://127.0.0.1:8546";
 const ENGINE_URL: &str = "http://127.0.0.1:8551";
-/// Where everything else points.
-const GATEWAY_ADDR: &str = "127.0.0.1:8545";
-/// The port half of the above, so `--bind` can choose the interface.
+/// The ports everything else points at. The interface comes from `--bind`, so
+/// these are halves of an address rather than addresses.
 const GATEWAY_PORT: u16 = 8545;
 /// The control room. Next to the gateway so it is obviously related, and not
 /// on it: one is JSON-RPC for tools, the other is a page for a person.
 const CONTROL_ROOM_PORT: u16 = 8544;
-const CONTROL_ROOM_ADDR: &str = "127.0.0.1:8544";
-const CONTROL_ROOM_URL: &str = "http://127.0.0.1:8544";
 const GATEWAY_URL: &str = "http://127.0.0.1:8545";
 /// The signing service. 8550 is the port Clef used to hold, which is where
 /// anyone looking for a signer will think to look.
@@ -89,22 +86,30 @@ enum Commands {
     /// Start the chain and produce blocks until interrupted.
     Up {
         /// Seconds between blocks.
-        #[arg(long, default_value_t = 1)]
+        ///
+        /// Rejected at zero rather than accepted: `tokio::time::interval`
+        /// panics on a zero period, and it did so after the container was up
+        /// and the banner printed, which reads as a crash rather than a typo.
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u64).range(1..))]
         block_time: u64,
 
         /// Leave the container running after Cupel exits.
         #[arg(long)]
         keep: bool,
 
-        /// Address the gateway listens on.
+        /// Address the gateway and the control room listen on.
         ///
-        /// Localhost by default. `0.0.0.0` makes it reachable from containers
+        /// Localhost by default. `0.0.0.0` makes them reachable from containers
         /// and from the network, which is what Prometheus needs on plain Linux
         /// Docker and what pointing another machine at this chain needs. The
         /// signer is deliberately not covered: it holds a key, and moving that
         /// off localhost should be a separate decision taken on purpose.
+        ///
+        /// An address, not a hostname: `localhost` used to reach the socket
+        /// parser, which expects host and port together, and panicked — after
+        /// the container was already running.
         #[arg(long, default_value = "127.0.0.1")]
-        bind: String,
+        bind: IpAddr,
     },
     /// Stop the chain, keeping its data.
     Down,
@@ -149,9 +154,20 @@ enum Commands {
 enum NetworkCommand {
     /// Generate a devnet, bring it up, and front all three nodes on 8545.
     Up {
-        /// Start the containers and exit, without the gateway.
+        /// Start the containers and exit.
+        ///
+        /// Both the gateway and the control room live in this process, so
+        /// detaching leaves the devnet running with neither: no 8545 across the
+        /// three nodes, and no page on 8544. The clients' own ports still work.
         #[arg(long)]
         detach: bool,
+
+        /// Address the gateway and the control room listen on.
+        ///
+        /// As for `cupel up`. Prometheus on plain Linux Docker cannot reach a
+        /// gateway bound to localhost, which is why network mode needs this too.
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: IpAddr,
     },
     /// Generate a devnet without starting it.
     Init,
@@ -176,13 +192,13 @@ async fn main() -> Result<()> {
     match cli.command.unwrap_or(Commands::Up {
         block_time: 1,
         keep: false,
-        bind: "127.0.0.1".to_string(),
+        bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
     }) {
         Commands::Up {
             block_time,
             keep,
             bind,
-        } => up(&root, block_time, keep, &bind).await,
+        } => up(&root, block_time, keep, bind).await,
         Commands::Down => down(&root, false).await,
         Commands::Reset => down(&root, true).await,
         Commands::Status => status(&root).await,
@@ -199,7 +215,7 @@ async fn main() -> Result<()> {
             }
         },
         Commands::Network { command } => match command {
-            NetworkCommand::Up { detach } => network::up(&root, detach).await,
+            NetworkCommand::Up { detach, bind } => network::up(&root, detach, bind).await,
             NetworkCommand::Init => network::init(&root).await,
             NetworkCommand::Down => network::down(&root, false).await,
             NetworkCommand::Reset => network::down(&root, true).await,
@@ -222,14 +238,17 @@ async fn main() -> Result<()> {
 /// process did not have — and the address answered, because the other process
 /// was still on it, with a different chain.
 pub(crate) async fn bind(address: &str, what: &str) -> Result<tokio::net::TcpListener> {
-    let socket: SocketAddr = address.parse().expect("a constant address parses");
+    let socket: SocketAddr = address
+        .parse()
+        .with_context(|| format!("the {what} cannot listen on {address}: not an address"))?;
     tokio::net::TcpListener::bind(socket)
         .await
         .with_context(|| {
             format!(
                 "could not put the {what} on {address} — something else is already \
-                 listening there. Another cupel, perhaps: `cupel down`, \
-                 `cupel network down`."
+                 listening there. If that is another cupel running in the \
+                 foreground, stop it with Ctrl-C; `cupel down` and `cupel \
+                 network down` stop containers, not a process holding a port."
             )
         })
 }
@@ -247,7 +266,7 @@ fn find_root() -> Result<PathBuf> {
     }
 }
 
-async fn up(root: &Path, block_time: u64, keep: bool, listen: &str) -> Result<()> {
+async fn up(root: &Path, block_time: u64, keep: bool, listen: IpAddr) -> Result<()> {
     let secret = ensure_jwt_secret(root)?;
 
     println!("cupel: starting the execution client");
@@ -278,15 +297,9 @@ async fn up(root: &Path, block_time: u64, keep: bool, listen: &str) -> Result<()
     ));
     gateway.probe_once().await;
 
-    let gateway_addr = format!("{listen}:{GATEWAY_PORT}");
+    let gateway_addr = SocketAddr::new(listen, GATEWAY_PORT).to_string();
     let listener = bind(&gateway_addr, "gateway").await?;
-    // 127.0.0.1 reaches a socket bound to 0.0.0.0, so the usual banner is still
-    // true there and friendlier than printing a wildcard. A specific other
-    // address is different: saying localhost would be a lie.
-    let gateway_url = match listen {
-        "127.0.0.1" | "0.0.0.0" | "localhost" => GATEWAY_URL.to_string(),
-        other => format!("http://{other}:{GATEWAY_PORT}"),
-    };
+    let gateway_url = url_for(listen, GATEWAY_PORT);
     let serving = tokio::spawn(cupel_gateway::serve_on(Arc::clone(&gateway), listener));
     let probing = tokio::spawn(Arc::clone(&gateway).probe_forever());
 
@@ -320,12 +333,9 @@ async fn up(root: &Path, block_time: u64, keep: bool, listen: &str) -> Result<()
         record_exchanges: true,
         ..Config::default()
     }));
-    let control_addr = format!("{listen}:{CONTROL_ROOM_PORT}");
+    let control_addr = SocketAddr::new(listen, CONTROL_ROOM_PORT).to_string();
     let control_listener = web::bind(&control_addr).await?;
-    let control_url = match listen {
-        "127.0.0.1" | "0.0.0.0" | "localhost" => CONTROL_ROOM_URL.to_string(),
-        other => format!("http://{other}:{CONTROL_ROOM_PORT}"),
-    };
+    let control_url = url_for(listen, CONTROL_ROOM_PORT);
     let control = tokio::spawn(web::serve_on(
         control_listener,
         web::Control {
@@ -371,6 +381,18 @@ async fn produce_until_interrupted(
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut stalled = 0u32;
 
+    // Built once and pinned, not once per iteration. `select!` drops the
+    // futures of the branches that did not win, so constructing `ctrl_c()`
+    // inside the loop meant no listener was registered while a block was being
+    // produced — and producing one takes about half of every second. A Ctrl-C
+    // arriving in that window was simply dropped on Unix; on Windows it was
+    // worse, because with no listener the default handler ends the process, so
+    // the container was left running with nothing driving it. Pinned, the
+    // registration outlives the block and the signal is waiting at the next
+    // pass through the loop.
+    let shutdown = tokio::signal::ctrl_c();
+    tokio::pin!(shutdown);
+
     loop {
         tokio::select! {
             _ = ticker.tick() => {
@@ -413,7 +435,7 @@ async fn produce_until_interrupted(
                     }
                 }
             }
-            _ = tokio::signal::ctrl_c() => return Ok(()),
+            _ = &mut shutdown => return Ok(()),
         }
     }
 }
@@ -503,8 +525,12 @@ async fn status(root: &Path) -> Result<()> {
             println!("  time     {}", head.timestamp);
         }
         Err(error) => {
+            // Exit non-zero as well as saying so. `cupel status` reported a
+            // chain that was not there and still exited 0, which makes it
+            // useless in the one place a status command earns its keep.
             println!("cupel: not reachable at {NODE_RPC_URL}");
             println!("  {error}");
+            bail!("the chain is not answering on {NODE_RPC_URL}");
         }
     }
     Ok(())
@@ -575,6 +601,22 @@ async fn compose_file(root: &Path, file: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// How to write a listening address in a URL somebody can click.
+///
+/// A socket bound to 0.0.0.0 is reachable at localhost, and printing that is
+/// friendlier than printing a wildcard — but an IPv6 address has to be
+/// bracketed or the port reads as part of the address.
+pub(crate) fn url_for(ip: IpAddr, port: u16) -> String {
+    let host = if ip.is_unspecified() {
+        if ip.is_ipv6() { "[::1]" } else { "127.0.0.1" }.to_string()
+    } else if ip.is_ipv6() {
+        format!("[{ip}]")
+    } else {
+        ip.to_string()
+    };
+    format!("http://{host}:{port}")
+}
+
 fn banner(head: &Head, block_time: u64, gateway_url: &str, control_url: &str) {
     println!();
     println!("  Cupel v{}", env!("CARGO_PKG_VERSION"));
@@ -582,7 +624,7 @@ fn banner(head: &Head, block_time: u64, gateway_url: &str, control_url: &str) {
     println!("  RPC          {gateway_url}");
     println!("  Control room {control_url}");
     println!("  Node         {NODE_RPC_URL} (behind the gateway)");
-    println!("  Metrics      {GATEWAY_URL}/metrics");
+    println!("  Metrics      {gateway_url}/metrics");
     println!("  Signer       {SIGNER_URL}  (policy at /policy, decisions at /audit)");
     println!("  Chain id     31337");
     println!("  Head         {} ({})", head.number, short(&head.hash));
@@ -640,6 +682,52 @@ mod tests {
             message.contains(&address),
             "and which port it is about: {message}"
         );
+    }
+
+    #[test]
+    fn a_hostname_is_not_an_address_and_clap_refuses_it_first() {
+        // `--bind localhost` used to reach SocketAddr::parse inside bind(),
+        // which expected a constant and panicked — after the container was up
+        // and had to be cleaned away by hand. Clap rejects it before any of
+        // that now, with a usage message instead of a backtrace.
+        assert!(Cli::try_parse_from(["cupel", "up", "--bind", "localhost"]).is_err());
+        assert!(Cli::try_parse_from(["cupel", "up", "--bind", "127.0.0.1"]).is_ok());
+        assert!(Cli::try_parse_from(["cupel", "up", "--bind", "0.0.0.0"]).is_ok());
+        assert!(Cli::try_parse_from(["cupel", "up", "--bind", "::1"]).is_ok());
+        // And network mode takes it too, which is what lets Prometheus on
+        // plain Linux Docker reach that gateway at all.
+        assert!(Cli::try_parse_from(["cupel", "network", "up", "--bind", "0.0.0.0"]).is_ok());
+    }
+
+    #[test]
+    fn a_zero_block_time_is_refused_before_anything_starts() {
+        // tokio::time::interval panics on a zero period. It did so after the
+        // chain was up and the banner printed, which reads as a crash rather
+        // than as the typo it is.
+        assert!(Cli::try_parse_from(["cupel", "up", "--block-time", "0"]).is_err());
+        assert!(Cli::try_parse_from(["cupel", "up", "--block-time", "1"]).is_ok());
+    }
+
+    #[test]
+    fn an_address_is_printed_the_way_a_browser_needs_it() {
+        assert_eq!(
+            url_for("127.0.0.1".parse().unwrap(), 8545),
+            "http://127.0.0.1:8545"
+        );
+        // Bound everywhere: localhost reaches it, and printing that is
+        // friendlier than printing a wildcard nobody can paste.
+        assert_eq!(
+            url_for("0.0.0.0".parse().unwrap(), 8545),
+            "http://127.0.0.1:8545"
+        );
+        assert_eq!(url_for("::".parse().unwrap(), 8544), "http://[::1]:8544");
+        // A specific address is printed as itself, and IPv6 is bracketed or
+        // the port reads as part of the address.
+        assert_eq!(
+            url_for("192.168.1.4".parse().unwrap(), 8544),
+            "http://192.168.1.4:8544"
+        );
+        assert_eq!(url_for("::1".parse().unwrap(), 8544), "http://[::1]:8544");
     }
 
     #[tokio::test]
