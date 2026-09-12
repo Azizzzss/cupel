@@ -47,6 +47,7 @@ allowed_empty() {
 
 fail=0
 checked=0
+skipped=0
 
 # Which targets Prometheus is actually scraping, before any panel is judged.
 # Every panel being empty almost always means the targets were down rather than
@@ -97,6 +98,7 @@ for file in "$DASHBOARDS"/*.json; do
     if [ "$count" -eq 0 ]; then
       if allowed_empty "$name:$title"; then
         echo "   skip  $title — empty, expected in $MODE mode"
+        skipped=$((skipped + 1))
       else
         echo "   FAIL  $title returned no series"
         echo "         $expr"
@@ -109,8 +111,17 @@ for file in "$DASHBOARDS"/*.json; do
 done
 
 echo
+resolved=$((checked - skipped))
 if [ "$fail" -ne 0 ]; then
-  echo "dashboards: FAILED ($checked queries checked, mode=$MODE)"
+  echo "dashboards: FAILED ($resolved of $checked resolved, $skipped skipped, mode=$MODE)"
   exit 1
 fi
-echo "dashboards: all $checked queries resolved (mode=$MODE)"
+# A skipped query is one nobody asked Prometheus to answer, and counting those
+# as resolved is how a run that verified nothing reports success. If every query
+# was skipped — or there were none to find, which a jq expression that stopped
+# matching would produce — this script has checked nothing at all.
+if [ "$resolved" -eq 0 ]; then
+  echo "dashboards: FAILED — nothing was verified ($checked seen, $skipped skipped, mode=$MODE)"
+  exit 1
+fi
+echo "dashboards: $resolved of $checked queries resolved, $skipped skipped as expected in $MODE mode"

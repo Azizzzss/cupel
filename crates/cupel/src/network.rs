@@ -375,26 +375,47 @@ fn testnet_dir(dir: &Path) -> Result<()> {
     // trusting that it does. Getting this wrong is silent: the clients start,
     // the chain is correct, and only the arithmetic in every comment is off.
     let config = std::fs::read_to_string(testnet.join("config.yaml"))?;
-    let effective = seconds_per_slot(&config).unwrap_or(MAINNET_SECONDS_PER_SLOT);
-    if effective != SECONDS_PER_SLOT {
-        bail!(
-            "the consensus config gives {effective}s slots, not the {SECONDS_PER_SLOT}s \
+    let expected = SECONDS_PER_SLOT * 1000;
+    match declared_slot_millis(&config) {
+        Some(declared) if declared != expected => bail!(
+            "the consensus config declares {declared}ms slots, not the {expected}ms \
              assumed here — every duration Cupel reports would be wrong"
-        );
+        ),
+        Some(_) => {}
+        // Nothing declared: the clients fall back to their preset. That is the
+        // state this chain was in for two releases, and it is benign only
+        // because SECONDS_PER_SLOT equals the preset — which a test asserts.
+        // Say it out loud, because reading the number from the file is the
+        // stronger check and this run did not get to make it.
+        None => println!(
+            "cupel: the config declares no slot duration; the clients will use \
+             the mainnet preset's {MAINNET_SECONDS_PER_SLOT}s"
+        ),
     }
     Ok(())
 }
 
-/// The slot duration a consensus config declares, if it declares one.
+/// The slot duration a consensus config declares, in milliseconds.
 ///
-/// `None` means the clients will use their preset's default, which is the state
-/// this chain was in for its first two releases.
-fn seconds_per_slot(config: &str) -> Option<u64> {
-    config
-        .lines()
-        .find_map(|line| line.strip_prefix("SECONDS_PER_SLOT:"))
-        .and_then(|value| value.split('#').next())
-        .and_then(|value| value.trim().parse().ok())
+/// Two spellings, because the generator changed which one it writes. The check
+/// above was added after the slot time turned out to be twelve seconds rather
+/// than the six every comment assumed — and it read only `SECONDS_PER_SLOT`,
+/// while the pinned generator writes `SLOT_DURATION_MS: 12000` and no
+/// `SECONDS_PER_SLOT` at all. So it parsed nothing, took the preset fallback,
+/// compared twelve with twelve, and passed. A guard written for exactly this
+/// failure could not see the value it was guarding.
+///
+/// `None` means the config declares neither and the clients will use their
+/// preset's default.
+fn declared_slot_millis(config: &str) -> Option<u64> {
+    let declared = |key: &str| {
+        config
+            .lines()
+            .find_map(|line| line.trim_start().strip_prefix(key))
+            .and_then(|value| value.split('#').next())
+            .and_then(|value| value.trim().parse::<u64>().ok())
+    };
+    declared("SLOT_DURATION_MS:").or_else(|| declared("SECONDS_PER_SLOT:").map(|s| s * 1000))
 }
 
 // -------------------------------------------------------------- bringing up
@@ -956,23 +977,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_config_without_the_key_reports_no_slot_time() {
-        // Exactly what the generator produced for two releases: a config with
-        // no SECONDS_PER_SLOT at all, which every client silently read as the
-        // mainnet preset's twelve.
-        let generated = "PRESET_BASE: 'mainnet'\nCONFIG_NAME: 'testnet'\nGENESIS_DELAY: 30\n";
-        assert_eq!(seconds_per_slot(generated), None);
-    }
-
-    #[test]
-    fn the_slot_time_is_read_back_the_way_it_was_written() {
-        assert_eq!(seconds_per_slot("SECONDS_PER_SLOT: 6\n"), Some(6));
+    fn the_slot_duration_is_read_from_whichever_key_the_generator_wrote() {
+        // The line ethereum-genesis-generator 6.2.1 actually writes, and the
+        // one the previous parser could not see — which is why the check that
+        // exists to catch a wrong slot time never once ran against a number.
         assert_eq!(
-            seconds_per_slot("SECONDS_PER_SLOT: 12  # mainnet"),
-            Some(12)
+            declared_slot_millis("SLOT_DURATION_MS: 12000\n"),
+            Some(SECONDS_PER_SLOT * 1000)
+        );
+        // The older spelling, still understood.
+        assert_eq!(declared_slot_millis("SECONDS_PER_SLOT: 12\n"), Some(12_000));
+        assert_eq!(
+            declared_slot_millis("SECONDS_PER_SLOT: 6  # mainnet"),
+            Some(6_000)
         );
         // A key that merely starts the same is a different key.
-        assert_eq!(seconds_per_slot("SECONDS_PER_SLOT_EXTRA: 6\n"), None);
+        assert_eq!(declared_slot_millis("SECONDS_PER_SLOT_EXTRA: 6\n"), None);
+        // Neither key: the clients fall back to their preset, which is the
+        // state this chain was in for its first two releases.
+        let generated = "PRESET_BASE: 'mainnet'\nCONFIG_NAME: 'testnet'\nGENESIS_DELAY: 30\n";
+        assert_eq!(declared_slot_millis(generated), None);
+        // And the case the guard exists for, which it can now see.
+        assert_ne!(
+            declared_slot_millis("SLOT_DURATION_MS: 6000\n"),
+            Some(SECONDS_PER_SLOT * 1000)
+        );
     }
 
     #[test]

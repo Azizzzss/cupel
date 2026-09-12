@@ -91,7 +91,11 @@ jobs:
         working-directory: ui
 
       - name: Types
-        run: npx tsc --noEmit
+        # `tsc --noEmit` here type-checked nothing at all. ui/tsconfig.json is a
+        # solution file — "files": [] and two references — so plain tsc obeyed
+        # it exactly, checked zero files and exited 0. Adding a deliberate type
+        # error changed nothing. Build mode follows the references.
+        run: npx tsc -b --noEmit
         working-directory: ui
 
       - name: The committed bundle matches its source
@@ -270,12 +274,19 @@ jobs:
         # So twelve is the real number, and this asks the running chain rather
         # than reading the file, because what matters is what the clients use.
         run: |
-          set -e
-          spec=$(curl -sf http://127.0.0.1:5052/eth/v1/config/spec)
-          slot=$(printf '%s' "$spec" | jq -r '.data.SECONDS_PER_SLOT')
-          epoch=$(printf '%s' "$spec" | jq -r '.data.SLOTS_PER_EPOCH')
-          echo "the chain is running ${slot}s slots, ${epoch} slots to an epoch"
-          test "$slot" = "12"
+          set -eo pipefail
+          # All three, not just Lighthouse. They read the same config file, but
+          # that is the assumption worth checking rather than the one to build
+          # on: a client that fell back to its own preset would be running a
+          # different chain and would answer this question differently.
+          for port in 5052 5152 5252; do
+            spec=$(curl -sf "http://127.0.0.1:$port/eth/v1/config/spec")
+            slot=$(printf '%s' "$spec" | jq -r '.data.SECONDS_PER_SLOT')
+            epoch=$(printf '%s' "$spec" | jq -r '.data.SLOTS_PER_EPOCH')
+            echo "port $port: ${slot}s slots, ${epoch} slots to an epoch"
+            test "$slot" = "12"
+            test "$epoch" = "32"
+          done
 
       - name: The chain finalises
         # Finality is the whole claim of this mode. More than two thirds of the

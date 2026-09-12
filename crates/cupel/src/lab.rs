@@ -50,6 +50,22 @@ impl Mode {
             Mode::Network => "cupel network up --detach",
         }
     }
+
+    /// What to call this chain when telling someone it is not running.
+    fn chain(self) -> &'static str {
+        match self {
+            Mode::Lab => "the single-node chain",
+            Mode::Network => "the devnet",
+        }
+    }
+
+    /// Where to ask whether it is up.
+    fn probe(self) -> &'static str {
+        match self {
+            Mode::Lab => crate::NODE_RPC_URL,
+            Mode::Network => network::NODES[0].beacon,
+        }
+    }
 }
 
 const WALKTHROUGHS: &[Walkthrough] = &[
@@ -111,6 +127,13 @@ pub(crate) async fn run(root: &std::path::Path, number: u8) -> Result<()> {
         .with_context(|| format!("there is no walkthrough {number}; `cupel lab` lists them"))?;
 
     heading(walk);
+    // Guarded here, once, rather than in each walkthrough. A walkthrough that
+    // forgot reported a refused connection from somewhere inside the plumbing,
+    // and the test meant to prevent that asked whether this file contained the
+    // string "require_lab()" — which it did, in the test itself. Moving the
+    // guard to the one place every walkthrough passes through makes the
+    // question unnecessary rather than answering it badly.
+    require(walk.mode, walk.mode.probe()).await?;
     match number {
         1 => how_a_block_is_made(root).await,
         2 => where_a_transaction_waits(root).await,
@@ -124,7 +147,6 @@ pub(crate) async fn run(root: &std::path::Path, number: u8) -> Result<()> {
 
 /// The Engine API handshake, one block's worth.
 async fn how_a_block_is_made(root: &std::path::Path) -> Result<()> {
-    require_lab().await?;
     let producer = lab_producer(root)?;
 
     say(
@@ -233,7 +255,6 @@ async fn how_a_block_is_made(root: &std::path::Path) -> Result<()> {
 
 /// Accepted, pending, included — three different states.
 async fn where_a_transaction_waits(root: &std::path::Path) -> Result<()> {
-    require_lab().await?;
     let producer = lab_producer(root)?;
 
     say(
@@ -356,7 +377,6 @@ fn duration(seconds: u64) -> String {
 /// What the beacon chain is counting.
 async fn slots_epochs_and_finality() -> Result<()> {
     let beacon = network::NODES[0].beacon;
-    require_network(beacon).await?;
 
     say(
         "Lab mode has no consensus: a producer on the host asks for a block \
@@ -518,8 +538,6 @@ async fn slots_epochs_and_finality() -> Result<()> {
 
 /// Independent implementations, one answer.
 async fn three_clients_one_chain() -> Result<()> {
-    require_network(network::NODES[0].beacon).await?;
-
     say(
         "Ethereum has no reference implementation. Lighthouse is Rust, Prysm is \
          Go, Teku is Java: different teams, different codebases, one \
@@ -770,23 +788,18 @@ async fn get(url: &str) -> Result<Value> {
         .await?)
 }
 
-/// Refuse to run a network walkthrough against a chain that is not there.
-async fn require_lab() -> Result<()> {
-    if rpc(crate::NODE_RPC_URL, "eth_chainId", &[]).await.is_err() {
+/// Refuse to run against a chain that is not there, and say how to start it.
+async fn require(mode: Mode, probe: &str) -> Result<()> {
+    let answering = match mode {
+        Mode::Lab => rpc(probe, "eth_chainId", &[]).await.is_ok(),
+        Mode::Network => get(&format!("{probe}/eth/v1/node/version")).await.is_ok(),
+    };
+    if !answering {
         bail!(
-            "this walkthrough needs the single-node chain — start it with \
-             `cupel up`, then run this again in another terminal"
-        );
-    }
-    Ok(())
-}
-
-/// The devnet is up, or say how to start it.
-async fn require_network(beacon: &str) -> Result<()> {
-    if get(&format!("{beacon}/eth/v1/node/version")).await.is_err() {
-        bail!(
-            "this walkthrough needs the devnet — start it with \
-             `cupel network up --detach`, then run this again"
+            "this walkthrough needs {} — start it with `{}`, then run this \
+             again in another terminal",
+            mode.chain(),
+            mode.how_to_start()
         );
     }
     Ok(())
@@ -1037,23 +1050,29 @@ mod tests {
         assert_eq!(dig(&value, &["nothing", "here"]), None);
     }
 
-    #[test]
-    fn every_walkthrough_checks_for_the_chain_it_needs() {
-        // A walkthrough that skips its guard reports a connection refused from
-        // somewhere inside the plumbing, which tells the reader nothing about
-        // what to do. Each one must ask first.
-        let source = include_str!("lab.rs");
-        for walk in WALKTHROUGHS {
-            let guard = match walk.mode {
-                Mode::Lab => "require_lab()",
-                Mode::Network => "require_network(",
-            };
+    /// The guard refuses when the chain is missing, and names the way out.
+    ///
+    /// What this replaces searched `include_str!("lab.rs")` for "require_lab()"
+    /// — a string that appeared in that search itself, so it matched its own
+    /// source and passed whatever the walkthroughs did. The guard now runs once
+    /// in `run`, before dispatch, so no walkthrough can skip it and there is
+    /// nothing left to search for. What is worth checking is the behaviour:
+    /// that it fails when nothing is listening, and that the message carries
+    /// the command that fixes it.
+    #[tokio::test]
+    async fn a_missing_chain_is_refused_with_the_command_that_starts_it() {
+        for mode in [Mode::Lab, Mode::Network] {
+            // Port 1 is reserved and never listening.
+            let error = require(mode, "http://127.0.0.1:1")
+                .await
+                .expect_err("nothing is listening there, so this must refuse");
+            let said = error.to_string();
             assert!(
-                source.contains(guard),
-                "walkthrough {} needs {:?} and nothing calls {guard}",
-                walk.number,
-                walk.mode
+                said.contains(mode.how_to_start()),
+                "{mode:?} should name `{}`, said: {said}",
+                mode.how_to_start()
             );
+            assert!(said.contains(mode.chain()), "{mode:?} said: {said}");
         }
     }
 
