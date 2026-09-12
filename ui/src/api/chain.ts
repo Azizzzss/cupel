@@ -6,10 +6,17 @@
 // real JSON-RPC and Beacon API traffic, which for this project is a feature
 // rather than an implementation detail.
 
+import { hexToNumber } from '../lib/hex'
+import { json, result, rpc, type Answer } from './transport'
+
+export type { Answer } from './transport'
+
 /** A JSON-RPC endpoint and the consensus client paired with it, if any. */
 export interface NodeTarget {
   name: string
   rpc: string
+  /** The same node's WebSocket, for `newHeads`; absent where none is published. */
+  ws?: string
   beacon?: string
   consensus?: string
 }
@@ -58,56 +65,6 @@ export const NETWORK: NodeTarget[] = [
 
 export type Mode = 'lab' | 'network' | 'none'
 
-/** Everything a request can be, including the two ways it can fail. */
-export type Answer<T> =
-  | { ok: true; value: T }
-  | { ok: false; reason: 'unreachable' | 'refused' }
-
-const TIMEOUT_MS = 2500
-
-/**
- * Fetch and parse, reporting the two ways that can fail separately.
- *
- * `accept` names statuses that are answers rather than refusals. The gateway's
- * `/health` returns 503 with a full body when every upstream is down — correct
- * for a load balancer, and exactly the moment the panel most needs to show
- * which upstreams are down. Treating every non-2xx as a refusal turned that
- * into "the gateway is not running".
- */
-async function json(
-  url: string,
-  init?: RequestInit,
-  accept: number[] = [],
-): Promise<Answer<unknown>> {
-  const abort = new AbortController()
-  const timer = setTimeout(() => abort.abort(), TIMEOUT_MS)
-  try {
-    const response = await fetch(url, { ...init, signal: abort.signal })
-    if (!response.ok && !accept.includes(response.status)) return { ok: false, reason: 'refused' }
-    return { ok: true, value: await response.json() }
-  } catch {
-    // A client that is not running and a client that is starting up look
-    // identical from here, and both are ordinary in a lab.
-    return { ok: false, reason: 'unreachable' }
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-async function rpc(url: string, method: string, params: unknown[] = []) {
-  return json(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-  })
-}
-
-function hexToNumber(value: unknown): number | undefined {
-  if (typeof value !== 'string') return undefined
-  const parsed = Number.parseInt(value, 16)
-  return Number.isFinite(parsed) ? parsed : undefined
-}
-
 /* ---------------------------------------------------------- execution layer */
 
 export interface ExecutionHead {
@@ -118,50 +75,36 @@ export interface ExecutionHead {
   gasUsed: number
 }
 
-export async function executionHead(rpcUrl: string): Promise<Answer<ExecutionHead>> {
-  const answer = await rpc(rpcUrl, 'eth_getBlockByNumber', ['latest', false])
-  if (!answer.ok) return answer
-  const block = (answer.value as { result?: Record<string, unknown> }).result
-  if (!block) return { ok: false, reason: 'refused' }
+function asHead(block: Record<string, unknown>): ExecutionHead {
   return {
-    ok: true,
-    value: {
-      number: hexToNumber(block.number) ?? 0,
-      hash: String(block.hash ?? ''),
-      transactions: Array.isArray(block.transactions) ? block.transactions.length : 0,
-      timestamp: hexToNumber(block.timestamp) ?? 0,
-      gasUsed: hexToNumber(block.gasUsed) ?? 0,
-    },
+    number: hexToNumber(block.number) ?? 0,
+    hash: String(block.hash ?? ''),
+    transactions: Array.isArray(block.transactions) ? block.transactions.length : 0,
+    timestamp: hexToNumber(block.timestamp) ?? 0,
+    gasUsed: hexToNumber(block.gasUsed) ?? 0,
   }
 }
 
-export async function blockByNumber(
-  rpcUrl: string,
-  number: number,
-): Promise<Answer<ExecutionHead>> {
-  const answer = await rpc(rpcUrl, 'eth_getBlockByNumber', [
-    `0x${number.toString(16)}`,
-    false,
-  ])
+async function headAt(rpcUrl: string, tag: string): Promise<Answer<ExecutionHead>> {
+  const answer = await rpc(rpcUrl, 'eth_getBlockByNumber', [tag, false])
   if (!answer.ok) return answer
-  const block = (answer.value as { result?: Record<string, unknown> }).result
-  if (!block) return { ok: false, reason: 'refused' }
-  return {
-    ok: true,
-    value: {
-      number: hexToNumber(block.number) ?? 0,
-      hash: String(block.hash ?? ''),
-      transactions: Array.isArray(block.transactions) ? block.transactions.length : 0,
-      timestamp: hexToNumber(block.timestamp) ?? 0,
-      gasUsed: hexToNumber(block.gasUsed) ?? 0,
-    },
-  }
+  const block = result(answer)
+  if (!block || typeof block !== 'object') return { ok: false, reason: 'refused' }
+  return { ok: true, value: asHead(block as Record<string, unknown>) }
+}
+
+export function executionHead(rpcUrl: string): Promise<Answer<ExecutionHead>> {
+  return headAt(rpcUrl, 'latest')
+}
+
+export function blockByNumber(rpcUrl: string, number: number): Promise<Answer<ExecutionHead>> {
+  return headAt(rpcUrl, `0x${number.toString(16)}`)
 }
 
 export async function chainId(rpcUrl: string): Promise<Answer<number>> {
   const answer = await rpc(rpcUrl, 'eth_chainId')
   if (!answer.ok) return answer
-  const id = hexToNumber((answer.value as { result?: unknown }).result)
+  const id = hexToNumber(result(answer))
   return id === undefined ? { ok: false, reason: 'refused' } : { ok: true, value: id }
 }
 
@@ -182,7 +125,7 @@ export interface BeaconState {
 }
 
 function asNumber(value: unknown): number {
-  return typeof value === 'string' ? (Number.parseInt(value, 10) || 0) : 0
+  return typeof value === 'string' ? Number.parseInt(value, 10) || 0 : 0
 }
 
 /** A number the client reported, or undefined if it reported none. */
@@ -192,25 +135,64 @@ function reported(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
+const data = (v: Answer<unknown>): Record<string, unknown> =>
+  v.ok ? ((v.value as { data?: Record<string, unknown> }).data ?? {}) : {}
+
+interface Constants {
+  secondsPerSlot: number | undefined
+  slotsPerEpoch: number | undefined
+  genesisTime: number | undefined
+}
+
+const constants = new Map<string, Constants>()
+
+/**
+ * The slot time, the epoch length and the genesis time.
+ *
+ * Asked for rather than assumed — and undefined when the answer did not come.
+ * The comment here used to say that, directly above `|| 12` and `|| 32`, so a
+ * failed request produced mainnet's numbers presented as this chain's: the
+ * exact failure the comment was warning about.
+ *
+ * None of the three ever changes, so a complete answer is kept per client and
+ * two of the five requests a reading used to cost stop being made.
+ */
+async function chainConstants(beacon: string): Promise<Constants> {
+  const known = constants.get(beacon)
+  if (known) return known
+  const [spec, genesis] = await Promise.all([
+    json(`${beacon}/eth/v1/config/spec`),
+    json(`${beacon}/eth/v1/beacon/genesis`),
+  ])
+  const found: Constants = {
+    secondsPerSlot: reported(data(spec).SECONDS_PER_SLOT),
+    slotsPerEpoch: reported(data(spec).SLOTS_PER_EPOCH),
+    genesisTime: reported(data(genesis).genesis_time),
+  }
+  if (
+    found.secondsPerSlot !== undefined &&
+    found.slotsPerEpoch !== undefined &&
+    found.genesisTime !== undefined
+  ) {
+    constants.set(beacon, found)
+  }
+  return found
+}
+
 export async function beaconState(beacon: string): Promise<Answer<BeaconState>> {
-  const [syncing, checkpoints, peers, spec, genesis] = await Promise.all([
+  const [syncing, checkpoints, peers, timing] = await Promise.all([
     json(`${beacon}/eth/v1/node/syncing`),
     json(`${beacon}/eth/v1/beacon/states/head/finality_checkpoints`),
     json(`${beacon}/eth/v1/node/peer_count`),
-    json(`${beacon}/eth/v1/config/spec`),
-    json(`${beacon}/eth/v1/beacon/genesis`),
+    chainConstants(beacon),
   ])
   // Finality is what this state is for, so a client that will not say where it
   // is has not answered — rather than reading as a chain at epoch zero.
   if (!syncing.ok) return syncing
   if (!checkpoints.ok) return checkpoints
 
-  const data = (v: Answer<unknown>) =>
-    v.ok ? ((v.value as { data?: Record<string, unknown> }).data ?? {}) : {}
-
   const sync = data(syncing)
   const finality = data(checkpoints) as Record<string, { epoch?: string; root?: string }>
-  const specData = data(spec)
 
   return {
     ok: true,
@@ -221,13 +203,7 @@ export async function beaconState(beacon: string): Promise<Answer<BeaconState>> 
       finalized: asNumber(finality.finalized?.epoch),
       finalizedRoot: String(finality.finalized?.root ?? ''),
       peers: reported(data(peers).connected),
-      // Asked for rather than assumed — and undefined when the answer did not
-      // come. The comment here used to say that, directly above `|| 12` and
-      // `|| 32`, so a failed request produced mainnet's numbers presented as
-      // this chain's: the exact failure the comment was warning about.
-      secondsPerSlot: reported(specData.SECONDS_PER_SLOT),
-      slotsPerEpoch: reported(specData.SLOTS_PER_EPOCH),
-      genesisTime: reported(data(genesis).genesis_time),
+      ...timing,
     },
   }
 }
@@ -241,16 +217,16 @@ export interface Upstream {
   errors: number
 }
 
-export async function gatewayHealth(
-  gateway = GATEWAY,
-): Promise<Answer<{ healthy: number; total: number; upstreams: Upstream[] }>> {
+export interface GatewayHealth {
+  healthy: number
+  total: number
+  upstreams: Upstream[]
+}
+
+export async function gatewayHealth(gateway = GATEWAY): Promise<Answer<GatewayHealth>> {
   const answer = await json(`${gateway}/health`, undefined, [503])
   if (!answer.ok) return answer
-  const body = answer.value as {
-    healthy?: number
-    total?: number
-    upstreams?: Upstream[]
-  }
+  const body = answer.value as Partial<GatewayHealth>
   return {
     ok: true,
     value: {
@@ -264,28 +240,17 @@ export async function gatewayHealth(
 /* ------------------------------------------------------------ mode detection */
 
 /**
- * Which mode is running.
+ * Which mode is running, guessed from which fixed port answers.
  *
- * Asked of the process that served this page first, because it knows. Guessing
- * from which fixed port answered misread a devnet started detached beside a lab
- * — the gateway on 8545 answers in both modes, and the network clients answer
- * whether or not anything is fronting them — and it could not work at all for a
- * page opened from another machine, where none of those ports are reachable.
- *
- * The probe is kept as a fallback, for a dev server started with nothing behind
- * it and a page opened from a file.
+ * The process that served this page knows what it is, and the page asks it
+ * first — see `api/control`. This is the fallback for a page with no control
+ * room behind it: a dev server started with nothing behind it, or a file. It
+ * misreads a devnet started detached beside a lab, because the gateway on 8545
+ * answers in both modes and the network clients answer whether or not anything
+ * is fronting them, which is why it is the fallback and not the rule.
  */
-export async function detectMode(control: string): Promise<Mode> {
-  const told = await json(`${control}/api/mode`)
-  if (told.ok) {
-    const mode = (told.value as { mode?: unknown }).mode
-    if (mode === 'lab' || mode === 'network') return mode
-  }
-
-  const [network, lab] = await Promise.all([
-    chainId(NETWORK[0].rpc),
-    chainId(LAB[0].rpc),
-  ])
+export async function probeMode(): Promise<Mode> {
+  const [network, lab] = await Promise.all([chainId(NETWORK[0].rpc), chainId(LAB[0].rpc)])
   if (network.ok) return 'network'
   if (lab.ok) return 'lab'
   return 'none'

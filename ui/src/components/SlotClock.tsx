@@ -1,36 +1,11 @@
 import type { ReactNode } from 'react'
-import { NETWORK, beaconState, type Answer, type BeaconState } from '../api/chain'
 import { mmss } from '../lib/format'
+import { freshness as judge } from '../lib/freshness'
 import { finalityNote, slotView, timing } from '../lib/slots'
-import { useFreshness, useNow, usePoll } from '../usePoll'
+import { useChain } from '../store/context'
+import { useNow } from '../usePoll'
 import { Field } from './Field'
 import { StaleNote } from './Stale'
-
-interface Reading {
-  node: string
-  consensus: string
-  state: BeaconState
-}
-
-/**
- * The first beacon node that answers, and which one it was.
- *
- * Every client, not only node1. Reading Lighthouse alone meant that stopping
- * node1 — the demonstration this lab asks for — left the clock claiming no
- * beacon node was answering while two of them were.
- */
-async function firstAnswering(): Promise<Answer<Reading>> {
-  for (const node of NETWORK) {
-    const answer = await beaconState(node.beacon!)
-    if (answer.ok) {
-      return {
-        ok: true,
-        value: { node: node.name, consensus: node.consensus ?? '', state: answer.value },
-      }
-    }
-  }
-  return { ok: false, reason: 'unreachable' }
-}
 
 /**
  * Where the chain is in its own units.
@@ -39,15 +14,24 @@ async function firstAnswering(): Promise<Answer<Reading>> {
  * genesis time as the chain reports them — never from constants held here. The
  * control plane spent two releases printing durations computed from a slot time
  * the chain was not using, and the only symptom was that its arithmetic was
- * quietly wrong. Asking costs one request.
+ * quietly wrong.
+ *
+ * Read from whichever client answers, not only node1: reading Lighthouse alone
+ * meant that stopping node1 — the demonstration this lab asks for — left the
+ * clock claiming no beacon node was answering while two of them were. A fresh
+ * answer is preferred to an old one, and an old one to none.
  */
 export function SlotClock() {
-  const reading = usePoll(firstAnswering, 4000, [])
-  const freshness = useFreshness(reading)
+  const { nodes } = useChain()
   const now = useNow(500)
-  const data = reading.value
 
-  if (!data) {
+  const readings = nodes
+    .filter((node) => node.row.value?.beacon.ok)
+    .map((node) => ({ node, age: judge(node.row, now) }))
+  const reading = readings.find((r) => r.age.kind === 'fresh') ?? readings[0]
+  const beacon = reading?.node.row.value?.beacon
+
+  if (!reading || !beacon?.ok) {
     return (
       <Panel>
         <span className="faint">no beacon node answering</span>
@@ -55,13 +39,13 @@ export function SlotClock() {
     )
   }
 
-  const { headSlot, justified, finalized } = data.state
-  const via = `via ${data.consensus} (${data.node})`
-  const t = timing(data.state)
+  const { headSlot, justified, finalized } = beacon.value
+  const via = `via ${reading.node.target.consensus} (${reading.node.target.name})`
+  const t = timing(beacon.value)
   // The clock rows keep ticking whatever the client says: they are wall-clock
   // arithmetic and stay true. What the chain reported — the head, the
   // justified and finalised epochs — is what goes grey when it ages.
-  const stale = freshness.kind === 'stale'
+  const stale = reading.age.kind === 'stale'
 
   if (!t) {
     return (
@@ -99,7 +83,7 @@ export function SlotClock() {
           note={finalityNote(view, finalized)}
           stale={stale}
         />
-        <StaleNote freshness={freshness} />
+        <StaleNote freshness={reading.age} />
         <p className="panel-note" style={{ marginTop: '0.5rem' }}>
           A slot is a fixed opportunity for one validator to propose; it passes
           whether or not they do. Finality trails the head by roughly two

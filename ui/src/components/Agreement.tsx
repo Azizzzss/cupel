@@ -1,50 +1,49 @@
-import { NETWORK, beaconState, executionHead, type Answer } from '../api/chain'
-import { shortHash } from '../lib/format'
-import { staleClass } from '../lib/freshness'
-import { verdict, type Row } from '../lib/verdict'
-import { useFreshness, usePoll } from '../usePoll'
-import { StaleNote } from './Stale'
+import { ago, shortHash } from '../lib/format'
+import { freshness as judge } from '../lib/freshness'
+import { unreachableRow, verdict } from '../lib/verdict'
+import { useChain } from '../store/context'
+import { useNow } from '../usePoll'
+import { Transport } from './Stale'
 
 /**
- * Every node's answers. An answer only when at least one beacon node spoke:
- * three silences are not a reading of the chain, and the panel keeps the last
- * reading it had, greyed, rather than replacing it with three dashes.
+ * Three answers to one question, and whether they match.
+ *
+ * Each node is judged for age on its own. A node that stops is shown greyed,
+ * with when it last spoke, and counts as not answering — never as a silent
+ * vote for whichever root it last reported.
  */
-async function readAll(): Promise<Answer<Row[]>> {
-  const rows = await Promise.all(
-    NETWORK.map(async (node) => {
-      const [execution, beacon] = await Promise.all([
-        executionHead(node.rpc),
-        beaconState(node.beacon!),
-      ])
-      return { name: node.name, consensus: node.consensus ?? '', execution, beacon }
-    }),
-  )
-  return rows.some((row) => row.beacon.ok)
-    ? { ok: true, value: rows }
-    : { ok: false, reason: 'unreachable' }
-}
-
 export function Agreement() {
-  const answers = usePoll(readAll, 2000, [])
-  const freshness = useFreshness(answers)
-  const rows = answers.value
-  if (!rows) {
+  const { nodes } = useChain()
+  const now = useNow(1000)
+
+  if (nodes.length === 0) return null
+  if (nodes.every((node) => node.row.loading)) {
     return (
       <section className="panel">
         <div className="panel-head">
           <h2>Do they agree?</h2>
         </div>
         <div className="panel-body">
-          <span className="faint pulse">
-            {answers.loading ? 'asking three clients…' : 'no clients reachable'}
-          </span>
+          <span className="faint pulse">asking three clients…</span>
         </div>
       </section>
     )
   }
 
-  const v = verdict(rows)
+  const readings = nodes.map((node) => {
+    const silent = unreachableRow(node.target.name, node.target.consensus ?? '')
+    const age = judge(node.row, now)
+    const value = node.row.value
+    return {
+      node,
+      age,
+      shown: value ?? silent,
+      counted: value && age.kind === 'fresh' ? value : silent,
+    }
+  })
+  const v = verdict(readings.map((reading) => reading.counted))
+  const stale = readings.filter((reading) => reading.age.kind === 'stale')
+
   return (
     <section className="panel">
       <div className="panel-head">
@@ -54,7 +53,7 @@ export function Agreement() {
           {v.text}
         </span>
       </div>
-      <div className={staleClass(freshness, 'panel-body scroll-x')}>
+      <div className="panel-body scroll-x">
         <table className="plain">
           <thead>
             <tr>
@@ -66,16 +65,17 @@ export function Agreement() {
               <th>final</th>
               <th>peers</th>
               <th>finalised root</th>
+              <th />
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
-              const state = row.beacon.ok ? row.beacon.value : undefined
+            {readings.map(({ node, age, shown }) => {
+              const state = shown.beacon.ok ? shown.beacon.value : undefined
               return (
-                <tr key={row.name}>
-                  <td className="name">{row.name}</td>
-                  <td>{row.consensus}</td>
-                  <td className="num">{row.execution.ok ? row.execution.value.number : '—'}</td>
+                <tr key={node.target.name} className={age.kind === 'stale' ? 'stale' : undefined}>
+                  <td className="name">{node.target.name}</td>
+                  <td>{node.target.consensus}</td>
+                  <td className="num">{shown.execution.ok ? shown.execution.value.number : '—'}</td>
                   <td className="num">{state ? state.headSlot : '—'}</td>
                   <td className="num">{state ? state.justified : '—'}</td>
                   <td className="num">{state ? state.finalized : '—'}</td>
@@ -83,12 +83,20 @@ export function Agreement() {
                   <td className="num faint">
                     {state && state.finalized > 0 ? shortHash(state.finalizedRoot) : '—'}
                   </td>
+                  <td>
+                    <Transport live={node.live.status === 'open'} />
+                  </td>
                 </tr>
               )
             })}
           </tbody>
         </table>
-        <StaleNote freshness={freshness} />
+        {stale.map(({ node, age }) => (
+          <p key={node.target.name} className="stale-note">
+            {node.target.name}: last answer {age.kind === 'stale' ? ago(age.ageMs) : ''} ago —
+            showing what was true then
+          </p>
+        ))}
         <p className="panel-note" style={{ marginTop: '0.7rem' }}>
           Lighthouse, Prysm and Teku are written by different teams in different
           languages. The finalised root is the thing they have to agree on, and

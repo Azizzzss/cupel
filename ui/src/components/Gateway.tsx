@@ -1,6 +1,6 @@
-import { gatewayHealth } from '../api/chain'
 import { staleClass } from '../lib/freshness'
-import { useFreshness, usePoll } from '../usePoll'
+import { useChain } from '../store/context'
+import { useFreshness } from '../usePoll'
 import { StaleNote } from './Stale'
 
 /**
@@ -10,11 +10,11 @@ import { StaleNote } from './Stale'
  * and watch it leave the rotation, start it and watch it come back, while the
  * requests keep being answered by whoever is left.
  */
-export function Gateway({ mode }: { mode: 'lab' | 'network' }) {
-  const health = usePoll(() => gatewayHealth(), 2000, [])
-  const freshness = useFreshness(health)
+export function Gateway() {
+  const { gateway, mode } = useChain()
+  const freshness = useFreshness(gateway)
 
-  if (!health.value) {
+  if (!gateway.value) {
     return (
       <section className="panel">
         <div className="panel-head">
@@ -30,7 +30,7 @@ export function Gateway({ mode }: { mode: 'lab' | 'network' }) {
     )
   }
 
-  const { healthy, total, upstreams } = health.value
+  const { healthy, total, upstreams } = gateway.value
   const kind = healthy === 0 ? 'pill-wrong' : healthy < total ? 'pill-working' : 'pill-agree'
 
   return (

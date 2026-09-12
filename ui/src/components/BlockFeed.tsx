@@ -1,70 +1,32 @@
-import { useEffect, useRef, useState } from 'react'
-import type { Dispatch, SetStateAction } from 'react'
-import { blockByNumber, executionHead, type ExecutionHead } from '../api/chain'
-import { merge } from '../lib/blocks'
 import { age, shortHash } from '../lib/format'
 import { staleClass } from '../lib/freshness'
-import { useFreshness, useNow, usePoll } from '../usePoll'
-import { StaleNote } from './Stale'
-
-const KEEP = 12
+import { useChain } from '../store/context'
+import { useFreshness, useNow } from '../usePoll'
+import { StaleNote, Transport } from './Stale'
 
 /**
  * The last few blocks, as they arrive.
  *
- * Backfilled on first sight so the panel opens with history rather than filling
- * one row at a time, and capped so a chain left running overnight does not
- * become an unbounded list.
+ * The window itself lives in the store — backfilled, gap-filled, capped. This
+ * shows the top of it.
  */
-export function BlockFeed({ rpc }: { rpc: string }) {
-  const [blocks, setBlocks] = useState<ExecutionHead[]>([])
-  // Whether the one-time backfill has been started. Kept in a ref because it
-  // must not cause a render, and read and written only in effects — never
-  // inside a state updater. See `merge` in lib/blocks.
-  const backfilling = useRef(false)
-
-  const head = usePoll(() => executionHead(rpc), 1500, [rpc])
+export function BlockFeed({ limit = 12 }: { limit?: number }) {
+  const { blocks, head, live } = useChain()
   const freshness = useFreshness(head)
   const now = useNow(1000)
-  const latest = head.value
-
-  // Pointing this at a different chain has to clear the list — the same block
-  // number then means a different block, and keeping the rows would mix two
-  // chains together. That is done by giving the element a `key` of the endpoint
-  // where it is used, so React discards this instance and mounts a fresh one.
-  // Clearing state from an effect instead would work and would also render the
-  // stale list once on the way past.
-
-  useEffect(() => {
-    if (!latest) return
-
-    if (!backfilling.current) {
-      backfilling.current = true
-      void fill(rpc, latest.number - KEEP + 1, latest.number, setBlocks)
-      return
-    }
-
-    // Poll every 1.5s against a chain making a block every second and some
-    // blocks are simply never the head when asked. Adding only what the poll
-    // returned leaves 590, 588, 586 — which reads as a chain missing blocks
-    // rather than a reader missing them. Fetch what was skipped.
-    setBlocks((current) => {
-      const newest = current[0]?.number ?? latest.number
-      if (latest.number - newest > 1) {
-        void fill(rpc, newest + 1, latest.number - 1, setBlocks)
-      }
-      return merge(current, [latest], KEEP)
-    })
-  }, [latest, rpc])
+  const shown = blocks.slice(0, limit)
 
   return (
     <section className="panel">
       <div className="panel-head">
         <h2>Blocks, as they arrive</h2>
-        <span className="panel-note">newest first</span>
+        <span className="row" style={{ gap: '0.5rem' }}>
+          <Transport live={live.status === 'open'} />
+          <span className="panel-note">newest first</span>
+        </span>
       </div>
       <div className={staleClass(freshness, 'panel-body scroll-x')}>
-        {blocks.length === 0 ? (
+        {shown.length === 0 ? (
           <span className="faint pulse">waiting for a block…</span>
         ) : (
           <table className="plain">
@@ -78,7 +40,7 @@ export function BlockFeed({ rpc }: { rpc: string }) {
               </tr>
             </thead>
             <tbody>
-              {blocks.map((block) => (
+              {shown.map((block) => (
                 <tr key={block.hash || block.number}>
                   <td className="num name">{block.number}</td>
                   <td className="num faint">{shortHash(block.hash, 10)}</td>
@@ -99,21 +61,4 @@ export function BlockFeed({ rpc }: { rpc: string }) {
       </div>
     </section>
   )
-}
-
-/** Fetch an inclusive range of blocks and fold them in. */
-async function fill(
-  rpc: string,
-  from: number,
-  to: number,
-  set: Dispatch<SetStateAction<ExecutionHead[]>>,
-) {
-  const wanted: number[] = []
-  // Capped: a page left open while a chain runs away, or reopened against a
-  // much longer chain, should not ask for thousands of blocks at once.
-  for (let n = Math.max(0, to - KEEP + 1 > from ? to - KEEP + 1 : from); n <= to; n += 1) {
-    wanted.push(n)
-  }
-  const answers = await Promise.all(wanted.map((n) => blockByNumber(rpc, n)))
-  set((current) => merge(current, answers.flatMap((a) => (a.ok ? [a.value] : [])), KEEP))
 }
