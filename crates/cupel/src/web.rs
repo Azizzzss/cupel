@@ -145,10 +145,14 @@ async fn produce(State(control): State<Control>) -> Response {
 }
 
 /// What this process is, for a page that would otherwise have to guess.
+///
+/// The version is here too: the page is compiled into the binary, so it is
+/// exactly as old as the process serving it, and the strip says which.
 async fn mode(State(control): State<Control>) -> Response {
     axum::Json(json!({
         "mode": control.mode,
         "producing": control.producing.is_some(),
+        "version": env!("CARGO_PKG_VERSION"),
     }))
     .into_response()
 }
@@ -262,6 +266,7 @@ mod tests {
         let said: Value = serde_json::from_slice(&body).expect("JSON");
         assert_eq!(said["mode"], "network");
         assert_eq!(said["producing"], false);
+        assert_eq!(said["version"], env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
