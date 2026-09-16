@@ -286,8 +286,24 @@ jobs:
           # that is the assumption worth checking rather than the one to build
           # on: a client that fell back to its own preset would be running a
           # different chain and would answer this question differently.
+          #
+          # `network up --detach` returns when node1 answers; nodes 2 and 3
+          # follow seconds later. The first time this asked all three, Prysm's
+          # HTTP server was starting in the same second the request arrived and
+          # the connection was reset. So each client gets two minutes to answer
+          # at all before its answer is judged — the question is what it runs,
+          # not how fast it boots.
           for port in 5052 5152 5252; do
-            spec=$(curl -sf "http://127.0.0.1:$port/eth/v1/config/spec")
+            spec=""
+            for _ in $(seq 1 24); do
+              spec=$(curl -sf "http://127.0.0.1:$port/eth/v1/config/spec" || true)
+              [ -n "$spec" ] && break
+              sleep 5
+            done
+            if [ -z "$spec" ]; then
+              echo "port $port never answered /eth/v1/config/spec"
+              exit 1
+            fi
             slot=$(printf '%s' "$spec" | jq -r '.data.SECONDS_PER_SLOT')
             epoch=$(printf '%s' "$spec" | jq -r '.data.SLOTS_PER_EPOCH')
             echo "port $port: ${slot}s slots, ${epoch} slots to an epoch"
