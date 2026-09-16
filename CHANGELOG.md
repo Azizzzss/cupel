@@ -7,7 +7,7 @@ the walkthroughs rather than phase F.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## [0.7.0] — The control room
 
 ### Added
 
@@ -181,6 +181,97 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   anything, and sends a request through the gateway first — per-method counters
   do not exist until something has been through it, and block production talks
   to the node directly.
+
+- **The control room asked the wrong questions.** Which mode was running was
+  guessed from which fixed port answered, which misread a devnet started beside
+  a lab and could not work from another machine; the process serving the page
+  knows, so there is `GET /api/mode` and the page asks it first. Under `npm run
+  dev` the produce button reported failure after making a real block, because
+  the page called the control room cross-origin and the control room sends no
+  CORS headers; Vite proxies `/api` now. "Gateway not running" appeared when
+  every upstream was down, because `/health` answers 503 with a full body and
+  any non-2xx read as a refusal. The agreement panel could call clients that
+  agreed a disagreement, because the finalised epoch and root came from two
+  requests made at different moments; both come from one response now. The
+  clock read Lighthouse alone, so stopping node1 — the lab's own demonstration
+  — stopped the clock; a failed spec request produced mainnet's slot numbers
+  labelled as this chain's; and a chain that never finalised said "first one
+  about now away" for ever. Missing numbers are undefined, the clock says it
+  was not told rather than inventing one, and finality that has stalled is
+  called stalled. A page opened from another machine now says why the client
+  panels are empty: the clients are published on 127.0.0.1 only.
+
+- **Stopping the node the demo names did not stop finality.** Sixty-four
+  validators across three nodes is 22 / 21 / 21, and justification needs more
+  than two thirds — 43. Losing node1 leaves 42 and finality stops; losing node2
+  or node3 leaves 43 and it carries on, a tenth of a percent above the line.
+  Five places told the reader to stop `cupel-el2` and watch finality stop,
+  and it did not. The split, the threshold and the node whose absence matters
+  are computed now, the banner and walkthrough 3 read them, and a test derives
+  the answer from the split and checks the named container against it. The
+  uneven split is the better lesson: the threshold counts validators, not
+  nodes.
+
+- **Four checks that could not fail.** The slot-time guard read a key the
+  pinned generator never writes, took its fallback of twelve, compared twelve
+  with twelve and passed; it reads both spellings now, in milliseconds. The
+  walkthrough guard test searched a file for a string the test itself
+  contained; the guard moved to where it cannot be forgotten and the test
+  checks behaviour instead. `tsc --noEmit` in `ui/` type-checked zero files,
+  because the tsconfig is a solution file; CI runs `tsc -b`. The dashboard
+  checker counted skipped panels as resolved and could report "all resolved"
+  having asked Prometheus nothing; it fails when nothing was verified.
+
+- **Ctrl-C during a block could be dropped**, because the shutdown future was
+  rebuilt inside the loop and `select!` drops the losers — on Windows the
+  process ended and left the container running with nothing driving it. It is
+  built once and pinned. `--bind localhost` and `--block-time 0` panicked
+  after the container was up; clap refuses both before anything starts.
+  `--bind` now reaches the metrics line and network mode, `--detach` says it
+  skips the control room too, `cupel status` exits non-zero when nothing
+  answers, and the port-taken message suggests Ctrl-C rather than a command
+  that cannot free the port.
+
+- **The walkthroughs were a second producer on a chain that already had one.**
+  Walkthroughs 1 and 2 drove the Engine API themselves beside `cupel up`'s own
+  producer, two producers naming the same parent — a reorg at best, stalled
+  production at worst, and four successful-looking calls either way. They ask
+  the process that holds the lock, through `/api/produce`, so the walkthrough
+  narrates the block that actually happened. Walkthrough 4 no longer calls a
+  node that did not answer "a slot behind", or two clients at different epochs
+  a disagreement; walkthrough 2 no longer blames a null receipt on a fee that
+  could never be too low. The network walkthroughs ask every client whether
+  the devnet is up, not only node1.
+
+- **One blob transaction stopped lab production for good.** `newPayloadV3`
+  takes the versioned hashes of the payload's blobs and the producer always
+  sent none, so a payload with a blob transaction was rejected, the transaction
+  stayed in the pool, and every later attempt failed the same way. The hashes
+  are computed from the commitments in the `getPayloadV3` answer, as EIP-4844
+  says, and an end-to-end test against a stand-in Engine API fails with the
+  old empty list. A 401 from the Engine API now says what it most likely means
+  instead of "error decoding response body", and the producer's default RPC is
+  the node, not the gateway.
+
+- **The gateway cached answers that change.** A pending transaction looked up
+  by hash, a receipt before finality, a block by number — all cacheable only on
+  a chain that cannot reorganise, which network mode can. What is cached now is
+  what is immutable without assuming finality: properties of the chain, and
+  blocks by hash. Filters were created on one node and polled on another, so
+  every filter-based subscription failed with "filter not found" on a healthy
+  devnet; node-local methods go to one node now. And a null result — "not
+  mined yet" — no longer counts as a failed request.
+
+- **The signer signed transactions other than the ones it was asked for.** The
+  spending budget counted value alone, so any number of zero-value
+  transactions at any fee fitted inside a budget of one wei; it counts value
+  plus the whole gas limit at the maximum fee. Quantities were guessed at — a
+  decimal gas limit parsed as hex, unparseable values silently defaulted, a
+  missing nonce became zero — and each signed something other than what was
+  requested. A quantity is 0x-prefixed hex that fits its field or the request
+  is refused naming the field; nonce and gas limit are required; a tip above
+  the fee cap is refused here. Audit entries record the maximum fee and the
+  worst-case cost the decision was made on.
 
 Phase F: a Chainlink oracle.
 

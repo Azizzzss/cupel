@@ -265,7 +265,7 @@ from what it describes and nothing catches it.
 | **Contract library** | Annotated ERC-20/Permit, ERC-4626, WETH, deployed in genesis | ✅ |
 | **RPC gateway** | Capability routing, health, failover, caching, metrics | ✅ |
 | **Policy signer** | A held key behind ceilings, allowlists and budgets, with an audit log | ✅ |
-| **Control room** | Live head, block feed, gateway health, client agreement, and an Engine API walkthrough that produces real blocks | ✅ |
+| **Control room** | Blocks as they arrive and what was in them, accounts and contracts, gateway health, client agreement, a clock in the chain's own units, and an Engine API walkthrough that produces real blocks — pushed by the nodes, and honest about when a number stopped being true | ✅ |
 | Execution client | geth | integrated |
 | Consensus clients | Lighthouse, Prysm, Teku — one each, on purpose | integrated |
 | Genesis and keys | ethPandaOps' generator, pinned | integrated |
@@ -742,7 +742,7 @@ and being able to query the past is worth a great deal in a teaching tool.
 | **D** | Policy signing and audit log | ✅ `v0.4.0` |
 | **E** | Multi-client network — three consensus clients, a bootnode, real finality | ✅ `v0.5.1` |
 | | Walkthroughs — four numbered lessons that do real work and narrate it | ✅ `v0.6.0` |
-| | Control room — the same machinery, watched in a browser | ✅ unreleased |
+| | Control room — the same machinery, watched in a browser | ✅ `v0.7.0` |
 | **F** | Chainlink oracle — a contract reading an off-chain price | next |
 | **G** | Blockscout and a faucet | planned |
 
