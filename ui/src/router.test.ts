@@ -11,6 +11,9 @@ describe('parseRoute', () => {
   it('reads the plain pages, with or without a trailing slash', () => {
     expect(parseRoute('#/blocks')).toEqual({ page: 'blocks' })
     expect(parseRoute('#/blocks/')).toEqual({ page: 'blocks' })
+    expect(parseRoute('#/depth')).toEqual({ page: 'depth' })
+    expect(parseRoute('#/depth/')).toEqual({ page: 'depth' })
+    expect(parseRoute('#/depth/extra').page).toBe('missing')
     expect(parseRoute('#/accounts')).toEqual({ page: 'accounts' })
     expect(parseRoute('#/gateway')).toEqual({ page: 'gateway' })
     expect(parseRoute('#/consensus')).toEqual({ page: 'consensus' })

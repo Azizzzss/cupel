@@ -1,0 +1,499 @@
+import { Canvas, useFrame } from '@react-three/fiber'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Group, MathUtils, type Mesh } from 'three'
+import {
+  cameraDistance,
+  lane,
+  laneCentre,
+  laneDepth,
+  SPACING,
+  standing,
+  type Placed,
+  type Standing,
+} from '../lib/depth'
+import { PageHead } from '../shell/PageHead'
+import { useChain } from '../store/context'
+
+/**
+ * The chain, as a solid object.
+ *
+ * Every other page reads the chain as text. This one reads the same window of
+ * blocks the Blocks page lists and gives it a shape: one box per block, running
+ * away from the camera in the order they were made, standing as tall as the gas
+ * they used. Nothing here is decoration — the length is the window, the heights
+ * are gas, the colour is whether a block carried transactions, and in network
+ * mode the markers are where each client says the head is.
+ *
+ * Loaded on its own, because three.js is larger than the rest of this interface
+ * put together and a reader who never opens this page should not pay for it.
+ */
+export default function Depth() {
+  const { blocks, mode, nodes } = useChain()
+  const placed = useMemo(() => lane(blocks), [blocks])
+  const palette = usePalette()
+  const [supported] = useState(webglAvailable)
+
+  const clients = nodes.map((node) => {
+    const head = node.row.value?.execution
+    return {
+      name: node.target.name,
+      consensus: node.target.consensus ?? '',
+      standing: standing(placed, head?.ok ? head.value : undefined),
+    }
+  })
+
+  return (
+    <>
+      <PageHead
+        title="The chain, in depth"
+        lede={
+          mode === 'network'
+            ? 'One box per block, as tall as the gas it used, with each client marked where it says the head is.'
+            : 'One box per block, as tall as the gas it used, newest at the front. Every block here was made by the four Engine API calls.'
+        }
+      />
+
+      {!supported ? (
+        <section className="panel">
+          <div className="panel-body">
+            <span className="faint">
+              this browser has no WebGL, so there is nothing to draw with — every
+              number on this page is on the Blocks page as text
+            </span>
+          </div>
+        </section>
+      ) : placed.length === 0 ? (
+        <section className="panel">
+          <div className="panel-body">
+            <span className="faint pulse">waiting for a block…</span>
+          </div>
+        </section>
+      ) : (
+        <div className="canvas-frame">
+          <Canvas
+            camera={{ position: [0, 3.4, cameraDistance(placed.length)], fov: 42 }}
+            dpr={[1, 2]}
+            gl={{ antialias: true }}
+          >
+            <color attach="background" args={[palette.bg]} />
+            {/* The far end of the lane runs into the background rather than
+                stopping at a visible edge: the window has a boundary, the chain
+                does not. */}
+            <fog
+              attach="fog"
+              args={[palette.bg, cameraDistance(placed.length) * 0.5, cameraDistance(placed.length) * 2.1]}
+            />
+            {/* Enough ambient light that the short sides of an empty block are
+                lit as well as its top: with only a lamp overhead, a low slab is
+                a dark shape on a dark floor and reads as a gap in the chain. */}
+            <ambientLight intensity={1.05} />
+            <directionalLight position={[5, 9, 7]} intensity={1.3} />
+            <directionalLight position={[-7, 4, -5]} intensity={0.45} color={palette.glow} />
+            <Rig centre={laneCentre(placed.length)} fit={cameraDistance(placed.length)}>
+              <Floor palette={palette} length={laneDepth(placed.length)} />
+              <Lane placed={placed} palette={palette} />
+              {clients.map((client, index) => (
+                <Marker
+                  key={client.name}
+                  placed={placed}
+                  standing={client.standing}
+                  lateral={index - (clients.length - 1) / 2}
+                  palette={palette}
+                />
+              ))}
+            </Rig>
+          </Canvas>
+        </div>
+      )}
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>What you are looking at</h2>
+          <span className="panel-note">drag to turn · then scroll to move closer</span>
+        </div>
+        <div className="panel-body">
+          <ul className="plain-list">
+            <li>
+              <Swatch colour={palette.glow} /> a block carrying transactions
+            </li>
+            <li>
+              <Swatch colour={palette.surface2} /> an empty block — still a block,
+              still proposed on time
+            </li>
+            <li>height is gas used, against the busiest block in the window</li>
+          </ul>
+          {mode === 'network' && (
+            <>
+              <p className="panel-note" style={{ marginTop: '0.8rem' }}>
+                The markers are the three clients, each floating above the block it
+                calls the head.
+              </p>
+              <ul className="plain-list">
+                {clients.map((client) => (
+                  <li key={client.name}>
+                    <Swatch colour={colourFor(client.standing, palette)} />
+                    <span className="name">{client.name}</span>{' '}
+                    <span className="faint">{client.consensus}</span> —{' '}
+                    {describe(client.standing)}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      </section>
+    </>
+  )
+}
+
+/** A colour chip, so the legend names a colour by showing it. */
+function Swatch({ colour }: { colour: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: 'inline-block',
+        width: '0.7rem',
+        height: '0.7rem',
+        borderRadius: '2px',
+        background: colour,
+        marginRight: '0.45rem',
+        verticalAlign: 'baseline',
+      }}
+    />
+  )
+}
+
+function describe(where: Standing): string {
+  switch (where) {
+    case 'same':
+      return 'on the same block, with the same hash'
+    case 'different':
+      return 'the same block number, a different hash — they disagree'
+    case 'ahead':
+      return 'ahead of this window; the feed has not caught up'
+    case 'behind':
+      return 'behind this window'
+    case 'silent':
+      return 'not answering'
+  }
+}
+
+function colourFor(where: Standing, palette: Palette): string {
+  switch (where) {
+    case 'same':
+      return palette.bead
+    case 'different':
+      return palette.wrong
+    case 'ahead':
+    case 'behind':
+      return palette.litharge
+    case 'silent':
+      return palette.faint
+  }
+}
+
+/**
+ * Something for the blocks to stand on.
+ *
+ * Without it the lane floats in a void and the far end is unreadable — the eye
+ * has nothing to measure the distance against, and an empty block on a dark
+ * background is a dark shape on a dark background.
+ */
+function Floor({ palette, length }: { palette: Palette; length: number }) {
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
+      <planeGeometry args={[6, length + 6]} />
+      <meshStandardMaterial color={palette.surface2} roughness={0.95} />
+    </mesh>
+  )
+}
+
+/** The lane itself: one box per block. */
+function Lane({ placed, palette }: { placed: Placed[]; palette: Palette }) {
+  return (
+    <group>
+      {placed.map((block) => (
+        <mesh key={block.hash || block.number} position={[0, block.height / 2, block.z]}>
+          <boxGeometry args={[0.46, block.height, 0.5]} />
+          {/* Grey for empty, the cupellation orange for a block that carried
+              something. An empty block used to take the surface colour, which
+              in the dark theme is a dark box on a dark floor. */}
+          <meshStandardMaterial
+            color={block.transactions > 0 ? palette.glow : palette.faint}
+            emissive={palette.glow}
+            emissiveIntensity={block.transactions > 0 ? 0.3 : 0}
+            roughness={0.6}
+            metalness={0.05}
+          />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+/** One client, above the block it calls the head. */
+function Marker({
+  placed,
+  standing: where,
+  lateral,
+  palette,
+}: {
+  placed: Placed[]
+  standing: Standing
+  lateral: number
+  palette: Palette
+}) {
+  const mesh = useRef<Mesh>(null)
+  // Ahead sits just in front of the newest block, behind at the far end: the
+  // window cannot show where they actually are, and pretending otherwise would
+  // put a client on a block this page never fetched.
+  const front = placed[0]
+  const back = placed[placed.length - 1]
+  const z =
+    where === 'ahead' ? SPACING : where === 'behind' ? (back?.z ?? 0) - SPACING : (front?.z ?? 0)
+  const height = (front?.height ?? 0.5) + 1.1
+
+  useFrame((state) => {
+    if (mesh.current) {
+      mesh.current.rotation.y = state.clock.elapsedTime * 0.6
+    }
+  })
+
+  if (where === 'silent') return null
+  return (
+    <mesh ref={mesh} position={[lateral * 0.75, height, z]}>
+      <octahedronGeometry args={[0.16]} />
+      <meshStandardMaterial
+        color={colourFor(where, palette)}
+        emissive={colourFor(where, palette)}
+        emissiveIntensity={0.6}
+      />
+    </mesh>
+  )
+}
+
+/**
+ * Turning, drifting and zooming, without a controls library.
+ *
+ * The camera orbits the middle of the lane; the lane itself never turns. An
+ * earlier version rotated the group instead, which tilts a fifty-unit ribbon
+ * about its centre like a seesaw and swings the far end out of frame — the
+ * reader is trying to walk around a thing, not tip it over.
+ *
+ * The resting distance follows the length of the lane until the reader scrolls
+ * and takes it over: a view somebody chose is not something to reset every time
+ * a block arrives.
+ */
+function Rig({ children, centre, fit }: { children: React.ReactNode; centre: number; fit: number }) {
+  const group = useRef<Group>(null)
+  const drift = useRef(0)
+  const newest = useRef<number | undefined>(undefined)
+  const view = useRef<View>({ yaw: 0.75, pitch: 0.34, held: false, engaged: false })
+  const resting = useRef(fit)
+  const { blocks } = useChain()
+  const reduced = usePrefersReducedMotion()
+
+  useEffect(() => {
+    resting.current = fit
+  }, [fit])
+
+  // Drag and wheel are wired by a plain function rather than a hook, so the
+  // view it writes to is the ref this component owns.
+  useEffect(() => orbitControls(view, resting), [])
+
+  const top = blocks[0]?.number
+  useEffect(() => {
+    if (top !== undefined && newest.current !== undefined && top > newest.current) {
+      drift.current = SPACING
+    }
+    newest.current = top
+  }, [top])
+
+  useFrame((state, delta) => {
+    const step = Math.min(delta, 0.1)
+    drift.current = MathUtils.damp(drift.current, 0, 6, step)
+    if (!reduced && !view.current.held) view.current.yaw += step * 0.05
+
+    if (group.current) group.current.position.z = drift.current + centre
+
+    const distance = view.current.zoom ?? resting.current
+    const { yaw, pitch } = view.current
+    const flat = Math.cos(pitch) * distance
+    const camera = state.camera
+    camera.position.x = MathUtils.damp(camera.position.x, Math.sin(yaw) * flat, 8, step)
+    camera.position.y = MathUtils.damp(
+      camera.position.y,
+      TARGET_Y + Math.sin(pitch) * distance,
+      8,
+      step,
+    )
+    camera.position.z = MathUtils.damp(camera.position.z, Math.cos(yaw) * flat, 8, step)
+    camera.lookAt(0, TARGET_Y, 0)
+  })
+
+  return <group ref={group}>{children}</group>
+}
+
+/** What the camera looks at: a little above the floor, at the lane's middle. */
+const TARGET_Y = 0.6
+
+interface View {
+  yaw: number
+  pitch: number
+  /** Set once the reader scrolls; until then the distance follows the lane. */
+  zoom?: number
+  held: boolean
+  /** Whether the reader has taken hold of the scene — see the wheel handler. */
+  engaged: boolean
+}
+
+/**
+ * Drag to turn, scroll to move closer.
+ *
+ * The view lives in a ref because it changes on every pointer move and is read
+ * on every frame; in state it would re-render the whole lane sixty times a
+ * second to move a camera.
+ */
+function orbitControls(
+  view: React.RefObject<View>,
+  resting: React.RefObject<number>,
+): () => void {
+  const canvas = document.querySelector('.canvas-frame canvas')
+  if (!canvas) return () => {}
+  let last: { x: number; y: number } | undefined
+
+  const down = (event: Event) => {
+    const pointer = event as PointerEvent
+    last = { x: pointer.clientX, y: pointer.clientY }
+    view.current.held = true
+    view.current.engaged = true
+    canvas.setPointerCapture?.(pointer.pointerId)
+  }
+  const move = (event: Event) => {
+    const pointer = event as PointerEvent
+    if (!last) return
+    view.current.yaw -= (pointer.clientX - last.x) * 0.006
+    view.current.pitch = clamp(view.current.pitch + (pointer.clientY - last.y) * 0.004, 0.04, 1.2)
+    last = { x: pointer.clientX, y: pointer.clientY }
+  }
+  const up = () => {
+    last = undefined
+    view.current.held = false
+  }
+  const leave = () => {
+    up()
+    view.current.engaged = false
+  }
+  const wheel = (event: Event) => {
+    // Only once the reader has taken hold of the scene. A canvas two thirds of
+    // the window tall that swallows the wheel is a trap: somebody scrolling
+    // down the page stops dead over it, and nothing on screen says why. Until
+    // it is grabbed, the wheel belongs to the page.
+    if (!view.current.engaged) return
+    const scroll = event as WheelEvent
+    scroll.preventDefault()
+    view.current.zoom = clamp((view.current.zoom ?? resting.current) + scroll.deltaY * 0.01, 3, 90)
+  }
+
+  canvas.addEventListener('pointerdown', down)
+  canvas.addEventListener('pointermove', move)
+  canvas.addEventListener('pointerup', up)
+  canvas.addEventListener('pointerleave', leave)
+  canvas.addEventListener('wheel', wheel, { passive: false })
+  return () => {
+    canvas.removeEventListener('pointerdown', down)
+    canvas.removeEventListener('pointermove', move)
+    canvas.removeEventListener('pointerup', up)
+    canvas.removeEventListener('pointerleave', leave)
+    canvas.removeEventListener('wheel', wheel)
+  }
+}
+
+function clamp(value: number, low: number, high: number): number {
+  return Math.min(high, Math.max(low, value))
+}
+
+interface Palette {
+  bg: string
+  surface2: string
+  glow: string
+  bead: string
+  litharge: string
+  wrong: string
+  faint: string
+}
+
+const FALLBACK: Palette = {
+  bg: '#131110',
+  surface2: '#24211d',
+  glow: '#f0813e',
+  bead: '#a3bac8',
+  litharge: '#cba755',
+  wrong: '#e8674f',
+  faint: '#7c7469',
+}
+
+function readPalette(): Palette {
+  if (typeof window === 'undefined') return FALLBACK
+  const style = getComputedStyle(document.documentElement)
+  const read = (name: keyof Palette, variable: string) =>
+    style.getPropertyValue(variable).trim() || FALLBACK[name]
+  return {
+    bg: read('bg', '--bg'),
+    surface2: read('surface2', '--surface-2'),
+    glow: read('glow', '--glow'),
+    bead: read('bead', '--bead'),
+    litharge: read('litharge', '--litharge'),
+    wrong: read('wrong', '--wrong'),
+    faint: read('faint', '--faint'),
+  }
+}
+
+/**
+ * The palette the stylesheet is currently using.
+ *
+ * Read from the CSS variables rather than repeated here, so the scene is lit by
+ * the same four colours as everything else and follows the theme toggle without
+ * knowing the toggle exists.
+ */
+function usePalette(): Palette {
+  const [palette, setPalette] = useState<Palette>(readPalette)
+  useEffect(() => {
+    const update = () => setPalette(readPalette())
+    const observer = new MutationObserver(update)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    media.addEventListener('change', update)
+    return () => {
+      observer.disconnect()
+      media.removeEventListener('change', update)
+    }
+  }, [])
+  return palette
+}
+
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(
+    () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  )
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setReduced(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+  return reduced
+}
+
+function webglAvailable(): boolean {
+  try {
+    const canvas = document.createElement('canvas')
+    return Boolean(canvas.getContext('webgl2') ?? canvas.getContext('webgl'))
+  } catch {
+    return false
+  }
+}

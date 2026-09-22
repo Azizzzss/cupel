@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import type { Mode } from '../api/chain'
 import { pageTitle } from '../lib/title'
 import { Accounts } from '../pages/Accounts'
@@ -14,6 +14,16 @@ import { WrongMode } from '../pages/WrongMode'
 import { available, toHash, useRoute, type Route } from '../router'
 import { useChain } from '../store/context'
 import { ErrorBoundary } from './ErrorBoundary'
+
+/**
+ * The 3D view, fetched only when somebody opens it.
+ *
+ * three.js is larger than the whole of the rest of this interface, and it is
+ * compiled into the binary either way — but a reader who never opens this page
+ * should not wait for it to parse, and the pages that matter should not get
+ * slower because one of them draws.
+ */
+const Depth = lazy(() => import('../pages/Depth'))
 import { Nav } from './Nav'
 import { StatusStrip } from './StatusStrip'
 
@@ -56,6 +66,20 @@ function Page({ route, mode, settled }: { route: Route; mode: Mode; settled: boo
       return <Overview />
     case 'blocks':
       return <Blocks />
+    case 'depth':
+      return (
+        <Suspense
+          fallback={
+            <section className="panel">
+              <div className="panel-body">
+                <span className="faint pulse">loading the scene…</span>
+              </div>
+            </section>
+          }
+        >
+          <Depth />
+        </Suspense>
+      )
     case 'block':
       return <Block number={route.number} />
     case 'tx':
