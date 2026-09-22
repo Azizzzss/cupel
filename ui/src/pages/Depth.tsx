@@ -2,6 +2,7 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Group, MathUtils, type Mesh } from 'three'
 import {
+  busiestGas,
   cameraDistance,
   lane,
   laneCentre,
@@ -30,6 +31,7 @@ import { useChain } from '../store/context'
 export default function Depth() {
   const { blocks, mode, nodes } = useChain()
   const placed = useMemo(() => lane(blocks), [blocks])
+  const idle = placed.length > 0 && busiestGas(blocks) === 0
   const palette = usePalette()
   const [supported] = useState(webglAvailable)
 
@@ -122,6 +124,15 @@ export default function Depth() {
             </li>
             <li>height is gas used, against the busiest block in the window</li>
           </ul>
+          {idle && (
+            <p className="panel-note" style={{ marginTop: '0.8rem' }}>
+              Every block in this window is empty, so every box is at its floor.
+              That is worth seeing rather than hiding: the chain keeps its
+              rhythm whether or not anybody uses it. Send a transaction — the
+              keys are on the Accounts page — and the block that carries it
+              rises.
+            </p>
+          )}
           {mode === 'network' && (
             <>
               <p className="panel-note" style={{ marginTop: '0.8rem' }}>
@@ -288,6 +299,7 @@ function Marker({
 function Rig({ children, centre, fit }: { children: React.ReactNode; centre: number; fit: number }) {
   const group = useRef<Group>(null)
   const drift = useRef(0)
+  const sway = useRef(0)
   const newest = useRef<number | undefined>(undefined)
   const view = useRef<View>({ yaw: 0.75, pitch: 0.34, held: false, engaged: false })
   const resting = useRef(fit)
@@ -313,12 +325,17 @@ function Rig({ children, centre, fit }: { children: React.ReactNode; centre: num
   useFrame((state, delta) => {
     const step = Math.min(delta, 0.1)
     drift.current = MathUtils.damp(drift.current, 0, 6, step)
-    if (!reduced && !view.current.held) view.current.yaw += step * 0.05
+    if (!reduced && !view.current.held) sway.current += step * SWAY_SPEED
 
     if (group.current) group.current.position.z = drift.current + centre
 
     const distance = view.current.zoom ?? resting.current
-    const { yaw, pitch } = view.current
+    const { pitch } = view.current
+    // A gentle sweep either side of wherever the reader left it, rather than a
+    // full turn. The lane is fifty blocks long and one wide: keep rotating and
+    // most of the time is spent looking straight down its end, where it is a
+    // single box wide and says nothing. This never leaves the useful arc.
+    const yaw = view.current.yaw + (reduced ? 0 : Math.sin(sway.current) * SWAY_ARC)
     const flat = Math.cos(pitch) * distance
     const camera = state.camera
     camera.position.x = MathUtils.damp(camera.position.x, Math.sin(yaw) * flat, 8, step)
@@ -337,6 +354,10 @@ function Rig({ children, centre, fit }: { children: React.ReactNode; centre: num
 
 /** What the camera looks at: a little above the floor, at the lane's middle. */
 const TARGET_Y = 0.6
+
+/** Radians either side of the resting angle, and how fast the sweep runs. */
+const SWAY_ARC = 0.3
+const SWAY_SPEED = 0.22
 
 interface View {
   yaw: number

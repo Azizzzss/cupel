@@ -43,9 +43,20 @@ export function heightFor(gasUsed: number, busiest: number): number {
   return MIN_HEIGHT + (MAX_HEIGHT - MIN_HEIGHT) * Math.sqrt(share)
 }
 
+/**
+ * The most gas any block in the window used.
+ *
+ * Zero when nothing has been sent to the chain, which is the ordinary state of
+ * a lab nobody has used yet — worth knowing about rather than drawing as fifty
+ * identical slabs and leaving the reader to wonder what broke.
+ */
+export function busiestGas(blocks: ExecutionHead[]): number {
+  return blocks.reduce((most, block) => Math.max(most, block.gasUsed), 0)
+}
+
 /** The block window as a lane, newest first — the order the store keeps. */
 export function lane(blocks: ExecutionHead[]): Placed[] {
-  const busiest = blocks.reduce((most, block) => Math.max(most, block.gasUsed), 0)
+  const busiest = busiestGas(blocks)
   const last = Math.max(1, blocks.length - 1)
   return blocks.map((block, index) => ({
     number: block.number,

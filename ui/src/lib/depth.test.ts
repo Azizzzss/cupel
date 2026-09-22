@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ExecutionHead } from '../api/chain'
 import {
+  busiestGas,
   cameraDistance,
   heightFor,
   lane,
@@ -41,6 +42,19 @@ describe('heightFor', () => {
 
   it('cannot exceed full height when a block is somehow busier than the busiest', () => {
     expect(heightFor(50, 10)).toBeCloseTo(heightFor(10, 10))
+  })
+})
+
+describe('busiestGas', () => {
+  it('is zero for a chain nobody has used', () => {
+    // The ordinary state of a fresh lab: blocks every second, all of them
+    // empty. The page says so rather than drawing fifty identical slabs.
+    expect(busiestGas([block(3), block(2), block(1)])).toBe(0)
+    expect(busiestGas([])).toBe(0)
+  })
+
+  it('finds the heaviest block in the window', () => {
+    expect(busiestGas([block(3, 21_000), block(2, 900_000), block(1, 0)])).toBe(900_000)
   })
 })
 
