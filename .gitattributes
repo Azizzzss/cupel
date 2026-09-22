@@ -7,3 +7,4 @@
 # Binary, and must not be touched.
 *.png binary
 *.ssz binary
+*.woff2 binary

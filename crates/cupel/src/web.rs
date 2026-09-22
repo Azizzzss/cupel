@@ -270,6 +270,39 @@ mod tests {
     }
 
     #[test]
+    fn the_typefaces_are_carried_rather_than_fetched() {
+        // The page used to pull its fonts from fonts.googleapis.com, so the
+        // design it was written to have appeared only on a machine with
+        // internet — and this binary exists to run a chain on a laptop with
+        // none. Offline every heading fell back to Georgia and nothing said so.
+        let index = Assets::get("index.html").expect("embedded");
+        let html = String::from_utf8_lossy(&index.data);
+        assert!(
+            !html.contains("googleapis") && !html.contains("gstatic"),
+            "the page must not fetch its typefaces over the network"
+        );
+
+        let fonts: Vec<String> = Assets::iter()
+            .filter(|file| file.ends_with(".woff2"))
+            .map(|file| file.to_string())
+            .collect();
+        assert!(!fonts.is_empty(), "no typeface was compiled in");
+
+        // Served as fonts, too: a woff2 handed over as application/octet-stream
+        // is one a browser will not use, and the fallback looks exactly like
+        // the fonts never having been shipped at all.
+        for font in fonts {
+            assert_eq!(
+                mime_guess::from_path(&font)
+                    .first_or_octet_stream()
+                    .as_ref(),
+                "font/woff2",
+                "{font}"
+            );
+        }
+    }
+
+    #[test]
     fn the_page_names_itself() {
         let index = Assets::get("index.html").expect("embedded");
         let html = String::from_utf8_lossy(&index.data);

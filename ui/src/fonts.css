@@ -1,0 +1,78 @@
+/* The typefaces, carried rather than fetched.
+ *
+ * These used to come from fonts.googleapis.com, which meant the design only
+ * appeared on a machine with internet. Cupel runs on a laptop with no network,
+ * in a container, on a train; the page is compiled into the binary and served
+ * from localhost, and it was reaching out to Google for the one part of itself
+ * it could not draw without. Offline — which is most of the point of the
+ * project — every heading silently fell back to Georgia and every table to the
+ * system sans, and nothing said so.
+ *
+ * Written out here rather than imported from the packages' own stylesheets for
+ * two reasons. Those ship a `.woff` beside every `.woff2`, and every browser
+ * that can run this page has read woff2 for years; and the variable Fraunces is
+ * published under the family name "Fraunces Variable", which is not the name
+ * the stylesheet asks for — importing it would have left the serif falling back
+ * exactly as before, with the fonts now shipped and unused.
+ *
+ * Latin only. The interface is in English, the packages carry Vietnamese and
+ * Latin Extended subsets as separate files, and a subset nothing renders is
+ * weight in a binary for no reason.
+ */
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2')
+    format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-500-normal.woff2')
+    format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2')
+    format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2')
+    format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2')
+    format('woff2');
+}
+
+/* One file for every weight the headings use, and the optical-size axis with
+   it: Fraunces at 9pt and at 144pt are different drawings, and browsers pick
+   between them automatically from the rendered size. */
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('@fontsource-variable/fraunces/files/fraunces-latin-opsz-normal.woff2')
+    format('woff2-variations');
+}
