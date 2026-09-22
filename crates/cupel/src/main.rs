@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod contracts;
+mod home;
 mod lab;
 mod network;
 mod web;
@@ -73,7 +74,11 @@ const TREASURY: usize = 2;
     about = "A local Ethereum lab: one command, a real chain, contracts ready to take apart"
 )]
 struct Cli {
-    /// Path to the Cupel checkout. Found by searching upward when omitted.
+    /// Path to a Cupel checkout.
+    ///
+    /// Found by searching upward when omitted. With no checkout in sight, the
+    /// binary lays out the files it carries in a directory of its own, which
+    /// `CUPEL_HOME` can name.
     #[arg(long, global = true)]
     root: Option<PathBuf>,
 
@@ -182,11 +187,23 @@ enum NetworkCommand {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    // A checkout wins when there is one, so anyone working on the project
+    // edits a compose file and sees the change. Otherwise the binary carries
+    // what it needs and runs from a directory of its own: see `home`.
     let root = match &cli.root {
-        Some(path) => path.clone(),
-        None => find_root().context(
-            "could not find a Cupel checkout — run this from inside one, or pass --root",
-        )?,
+        Some(path) => {
+            if !path.join("compose/lab.yml").is_file() {
+                bail!(
+                    "{} is not a Cupel checkout — no compose/lab.yml in it",
+                    path.display()
+                );
+            }
+            path.clone()
+        }
+        None => match find_root() {
+            Some(checkout) => checkout,
+            None => home::prepare()?,
+        },
     };
 
     match cli.command.unwrap_or(Commands::Up {
@@ -222,6 +239,15 @@ async fn main() -> Result<()> {
             NetworkCommand::Status => network::status(&root).await,
         },
         Commands::Genesis => {
+            // The one command the carried files cannot serve: it rebuilds the
+            // allocation from the Foundry artifacts in `contracts/out`, which
+            // belong to a checkout and are not in a release.
+            if !root.join("contracts").is_dir() {
+                bail!(
+                    "`cupel genesis` rebuilds the genesis allocation from the Foundry artifacts \
+                     in contracts/out, so it needs a checkout — run it from one, or pass --root"
+                );
+            }
             let count = contracts::regenerate_genesis(&root)?;
             println!("cupel: wrote {count} contracts into the genesis allocation");
             println!("cupel: run `cupel reset` for a chain that carries them");
@@ -254,14 +280,18 @@ pub(crate) async fn bind(address: &str, what: &str) -> Result<tokio::net::TcpLis
 }
 
 /// Walk upward from the working directory looking for the compose file.
-fn find_root() -> Result<PathBuf> {
-    let mut directory = std::env::current_dir()?;
+///
+/// Nothing found is an ordinary answer rather than an error: somebody who
+/// downloaded a release is not in a checkout and never will be, and the
+/// binary carries what that case needs.
+fn find_root() -> Option<PathBuf> {
+    let mut directory = std::env::current_dir().ok()?;
     loop {
         if directory.join("compose/lab.yml").is_file() {
-            return Ok(directory);
+            return Some(directory);
         }
         if !directory.pop() {
-            bail!("no compose/lab.yml in this directory or any parent");
+            return None;
         }
     }
 }

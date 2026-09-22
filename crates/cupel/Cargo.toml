@@ -25,7 +25,10 @@ axum.workspace = true
 clap = { version = "4", features = ["derive"] }
 mime_guess = "2"
 reqwest.workspace = true
-rust-embed = "8"
+# `include-exclude` keeps the generated Engine API secret out of the binary;
+# `debug-embed` makes a debug build carry the same files a release does, so
+# "it worked on my machine" cannot mean "my machine had the checkout".
+rust-embed = { version = "8", features = ["debug-embed", "include-exclude"] }
 serde_json.workspace = true
 tokio.workspace = true
 
