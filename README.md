@@ -132,6 +132,7 @@ remembers:
 |---|---|
 | **Overview** | the blocks as they arrive, the gateway, and in network mode the agreement table and the clock |
 | **Blocks** | the recent window, fifty at a time and five hundred at most. Every number opens the block — the header as the client sent it, the transactions in full — and every transaction opens what was sent, what it cost, what happened, and the events the genesis contracts logged, decoded by name |
+| **In depth** | the same window as a solid object: one box per block, as tall as the gas it used. Point at one for its number, click to open it |
 | **Accounts** | the four development accounts with live balances and nonces, and the three contracts with their names, symbols and supplies read by `eth_call` |
 | **Gateway** | how many upstreams are answering, and what each has forwarded |
 | **Consensus** | network mode: what Lighthouse, Prysm and Teku each call the head, the justified epoch and the finalised one, and whether they agree |
@@ -166,6 +167,32 @@ The blocks pages are bounded on purpose. Fifty arrive on their own, fifty more
 come on request, and the page stops at five hundred and says so: this is the
 recent window, not an explorer. An explorer indexes; this asks. The explorer is
 phase G.
+
+**One page is a picture.** *In depth* draws the same window as a solid object:
+a lane running away from the camera in the order the blocks were made, each box
+as tall as the gas its block used, orange where it carried transactions and grey
+where it was empty. Point at one and it names itself — number, transactions, gas
+— and clicking opens it. In network mode a marker floats above the block each
+client calls the head.
+
+Nothing in it is ornament. The length is the window, the heights are gas, the
+colour is whether anything was in it, and the markers are what the clients
+answered. A height has to mean the same thing twice, so the scale climbs in
+round steps and the legend prints the number it has reached: scaled straight to
+the busiest block in view, every box grows the moment that block falls off the
+end of a window that moves every second, and a block that has not changed
+appears to have.
+
+It refuses two things. A client whose head is outside the window is drawn at the
+end of the lane and named as ahead or behind, never placed on a block this page
+never fetched. And the scene does not take the wheel until you have taken hold
+of it, because a canvas two thirds of the window tall that swallows scrolling is
+a trap with nothing on screen to explain it.
+
+three.js is larger than the rest of this interface put together, so that page is
+fetched on its own: the main bundle stays where it was and the scene is a
+separate chunk, which only a reader who opens it pays to parse. The binary
+carries both either way, and says so in what it weighs.
 
 Then there is a button that makes a block. It runs the same four Engine API
 calls the producer runs once a second, with a copy kept of everything sent and
@@ -206,6 +233,16 @@ into genesis. CI lints it, type-checks it, runs its tests, rebuilds it from
 source on every push and fails if the result differs from what is committed,
 because a build output kept in a repository becomes a lie the moment its source
 moves without it.
+
+The typefaces travel with it, for the same reason. The page used to fetch IBM
+Plex and Fraunces from Google, so the design it was written to have appeared
+only on a machine with internet — and a laptop with no network is most of the
+point of this project. Offline, every heading fell back to Georgia and nothing
+said so. Six woff2 files, latin only, are compiled in beside the bundle, and a
+test asserts that the page names no font host and that each file is served as
+`font/woff2`: a woff2 handed over as `application/octet-stream` is one a browser
+declines to use, and that failure looks exactly like never having shipped
+them.
 
 ---
 

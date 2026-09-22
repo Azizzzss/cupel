@@ -9,7 +9,43 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Added
+
+- **The chain as a solid object.** A page that draws the block window in three
+  dimensions: one box per block, running away from the camera in the order they
+  were made, as tall as the gas each used, orange where a block carried
+  transactions and grey where it was empty. Point at a block for its number,
+  transactions and gas; click it to open the block page. In network mode a
+  marker floats above the block each client calls the head, and a client whose
+  head is outside the window is drawn at the end of the lane and named as ahead
+  or behind rather than placed on a block the page never fetched.
+
+  Nothing in the scene is ornament — the length is the window, the heights are
+  gas, the colour is whether anything was in the block. The height scale climbs
+  in round steps and the legend prints the number it has reached: scaled
+  straight to the busiest block in view, every box grows the moment that block
+  falls out of a window that moves every second, and a block that has not
+  changed appears to have.
+
+  three.js is larger than the rest of the interface put together, so the page is
+  loaded on its own and only a reader who opens it pays to parse it. The binary
+  carries it either way.
+
 ### Fixed
+
+- **The control room fetched its own typefaces over the internet.** The page
+  linked fonts.googleapis.com for IBM Plex and Fraunces. It is compiled into a
+  binary and served from localhost, and this project exists to run a chain on a
+  laptop with no network — so offline, which is most of the point, every heading
+  fell back to Georgia and every table to the system sans, with nothing to say
+  why. Six woff2 files travel with it now, latin only, and a test asserts the
+  page names no font host and that each file is served as `font/woff2`.
+
+- **The check that starts a chain from a download tripped over the chain
+  already running.** It stopped the previous step's container and then tried to
+  bind 8545, which that step's *process* was still holding — the thing its own
+  error message says `cupel down` cannot help with. It had never run on CI
+  before, because the commits that added it had not been pushed.
 
 - **A downloaded binary could not start a chain.** The archive holds a binary,
   a README and two licences; every command except `--version` went looking for
