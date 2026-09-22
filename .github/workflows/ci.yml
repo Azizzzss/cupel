@@ -19,7 +19,7 @@ jobs:
     name: rust
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -51,7 +51,7 @@ jobs:
     name: contracts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: foundry-rs/foundry-toolchain@v1
 
       - name: Formatting
@@ -75,8 +75,8 @@ jobs:
     name: ui
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -134,7 +134,7 @@ jobs:
     name: integration
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: foundry-rs/foundry-toolchain@v1
@@ -214,10 +214,50 @@ jobs:
           sleep 12
           .github/scripts/check-dashboards.sh http://127.0.0.1:9090 lab
 
+      - name: A chain starts from a download, with no checkout in reach
+        # Everything above runs the binary from the working tree, where
+        # `compose/lab.yml` is always a directory or two up. That is exactly how
+        # a download that could not start a chain shipped for four releases: the
+        # release archive holds a binary, the binary went looking for a checkout
+        # that was not there, and no check in this repository ever stood
+        # anywhere else.
+        #
+        # So this starts a chain the way a download does. The binary is copied
+        # out, the working directory has no checkout above it, and the files
+        # come from the binary itself. It is also the check that the mounts
+        # inside the carried compose file resolve against the directory it was
+        # written to rather than against wherever somebody happened to be.
+        run: |
+          set -eu
+          ./target/debug/cupel observe --down || true
+          ./target/debug/cupel down
+
+          cp target/debug/cupel "$RUNNER_TEMP/cupel"
+          cd "$RUNNER_TEMP"
+          export CUPEL_HOME="$RUNNER_TEMP/home"
+
+          ./cupel up > from-home.log 2>&1 &
+          pid=$!
+          for _ in $(seq 1 90); do
+            grep -q "Producing blocks" from-home.log && break
+            sleep 1
+          done
+          grep -q "Producing blocks" from-home.log || { cat from-home.log; exit 1; }
+
+          test "$(cast call 0x00000000000000000000000000000000c0de0020 'name()(string)' \
+            --rpc-url http://127.0.0.1:8545)" = '"Cupel Token"'
+          test -f "$CUPEL_HOME/compose/lab.yml"
+          test -f "$CUPEL_HOME/config/genesis/jwt.hex"
+
+          kill -INT "$pid"
+          wait "$pid" || true
+          echo "a chain ran from $CUPEL_HOME, with no checkout in reach"
+
       - name: Logs on failure
         if: failure()
         run: |
           cat cupel.log || true
+          cat "$RUNNER_TEMP/from-home.log" || true
           docker logs cupel-geth 2>&1 | tail -50 || true
           curl -s http://127.0.0.1:9090/api/v1/targets | head -c 2000 || true
 
@@ -235,7 +275,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: foundry-rs/foundry-toolchain@v1

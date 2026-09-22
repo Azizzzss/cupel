@@ -14,6 +14,8 @@ on:
 
 permissions:
   contents: write
+  # The publish job asks what CI made of this commit before publishing it.
+  actions: read
 
 jobs:
   build:
@@ -39,7 +41,7 @@ jobs:
             target: x86_64-pc-windows-msvc
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -50,24 +52,42 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p cupel --target ${{ matrix.target }}
 
-      - name: It runs, and it is the version on the tag
-        # A binary that builds and will not start is worse than no binary. Both
-        # of these commands need no chain, so they work on a bare runner.
+      - name: It is the version the tag names
+        # This step used to print `--version` and compare it with nothing, under
+        # a title that said otherwise. A tag moved onto a commit whose
+        # Cargo.toml still held the old number would have published a binary
+        # that disagreed with the release it was attached to, and the first
+        # person to notice would have been somebody reading `cupel --version`.
         shell: bash
         run: |
-          set -e
+          set -eu
           BIN="target/${{ matrix.target }}/release/cupel"
           [ -f "$BIN.exe" ] && BIN="$BIN.exe"
-          "$BIN" --version
-          "$BIN" lab
-          "$BIN" contracts
+          said=$("$BIN" --version | awk '{ print $2 }')
+          echo "the binary says $said"
+          case "${{ github.ref_name }}" in
+            v*)
+              want="${{ github.ref_name }}"
+              want="${want#v}"
+              if [ "$said" != "$want" ]; then
+                echo "but the tag says $want."
+                echo "Bump the workspace version and commit it, or move the tag."
+                exit 1
+              fi
+              echo "which is what ${{ github.ref_name }} says"
+              ;;
+            *)
+              echo "not a tag, so there is nothing to compare it with"
+              ;;
+          esac
 
       - name: Package
         shell: bash
         run: |
-          set -e
+          set -eu
           mkdir -p dist
           NAME="cupel-${{ github.ref_name }}-${{ matrix.name }}"
+          echo "NAME=$NAME" >> "$GITHUB_ENV"
           if [ "${{ runner.os }}" = "Windows" ]; then
             7z a "dist/$NAME.zip" \
               "./target/${{ matrix.target }}/release/cupel.exe" \
@@ -79,7 +99,48 @@ jobs:
           fi
           ls -la dist/
 
-      - uses: actions/upload-artifact@v4
+      - name: The packaged binary works where a download lands
+        # The check that would have caught what this release now fixes. The old
+        # smoke test ran the binary from inside the checkout, where
+        # `compose/lab.yml` is always a directory or two up — so it passed
+        # while every download failed with "could not find a Cupel checkout".
+        # This one unpacks the archive somewhere with no checkout above it,
+        # which is where the person who downloaded it is standing.
+        shell: bash
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/unpacked"
+          home="$RUNNER_TEMP/home"
+          rm -rf "$out" "$home"
+          mkdir -p "$out"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z x "$GITHUB_WORKSPACE/dist/$NAME.zip" -o"$out" > /dev/null
+            BIN="$out/cupel.exe"
+          else
+            tar -xzf "$GITHUB_WORKSPACE/dist/$NAME.tar.gz" -C "$out"
+            BIN="$out/cupel"
+          fi
+
+          cd "$RUNNER_TEMP"
+          CUPEL_HOME="$home" "$BIN" contracts
+          CUPEL_HOME="$home" "$BIN" lab
+
+          for needed in compose/lab.yml compose/network.yml compose/observe.yml \
+                        config/genesis/genesis.json config/prometheus/prometheus.yml; do
+            if [ ! -f "$home/$needed" ]; then
+              echo "$needed was not laid out, so a chain cannot start from here"
+              exit 1
+            fi
+          done
+          # Generated per chain. One carried in a release would be the same
+          # Engine API secret on every machine that downloaded it.
+          if [ -f "$home/config/genesis/jwt.hex" ]; then
+            echo "the archive carries an Engine API secret"
+            exit 1
+          fi
+          echo "the download carries what it needs and nothing it should not"
+
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: dist/*
@@ -89,12 +150,54 @@ jobs:
     name: publish
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     # Only a real tag publishes. workflow_dispatch exists to check that the four
     # builds still work without making a release out of it.
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+
+      - name: CI agrees with the commit this tag names
+        # v0.7.0 published while CI on its own commit was red. The builds above
+        # prove the binary compiles and runs; they say nothing about the devnet
+        # reaching finality, the committed bundle matching its source, or the
+        # contracts still passing — which is what CI is for, and a release is
+        # the wrong place to find out.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          sha="${{ github.sha }}"
+          echo "waiting for CI on $sha"
+          for _ in $(seq 1 90); do
+            run=$(gh run list --workflow CI --commit "$sha" --limit 1 \
+              --json status,conclusion,url \
+              --jq '.[] | "\(.status) \(.conclusion) \(.url)"' || true)
+            case "$run" in
+              completed*)
+                verdict=$(echo "$run" | cut -d' ' -f2)
+                where=$(echo "$run" | cut -d' ' -f3)
+                echo "CI $verdict: $where"
+                if [ "$verdict" = "success" ]; then
+                  exit 0
+                fi
+                echo "Publishing a commit CI rejected is how a broken release goes out."
+                echo "Fix it on main, then move the tag."
+                exit 1
+                ;;
+              "")
+                echo "no CI run for this commit yet"
+                ;;
+              *)
+                echo "CI is ${run%% *}"
+                ;;
+            esac
+            sleep 60
+          done
+          echo "CI did not finish within ninety minutes, so nothing was published"
+          exit 1
+
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -121,7 +224,7 @@ jobs:
           PY
           cat notes.md
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           body_path: notes.md
