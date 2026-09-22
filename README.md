@@ -72,6 +72,13 @@ project.
 
 ## Try it
 
+A [release](https://github.com/Azizzzss/cupel/releases) is one binary that
+carries the rest. The compose files and the configuration are inside it, and it
+writes them out the first time it runs, so the download is the whole thing.
+Docker still has to be running, because the chain does.
+
+From a checkout instead:
+
 ```bash
 cargo run -p cupel --release
 ```
@@ -664,7 +671,7 @@ Network mode uses its own ports, so both modes can run at once:
 ## Requirements
 
 - **Docker**, with the daemon running
-- **Rust** 1.91 or newer
+- **Rust** 1.91 or newer, to build it — a release binary needs none
 - **Foundry**, only to change a contract — not to run one
 
 ```bash

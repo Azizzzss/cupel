@@ -7,6 +7,55 @@ the walkthroughs rather than phase F.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Fixed
+
+- **A downloaded binary could not start a chain.** The archive holds a binary,
+  a README and two licences; every command except `--version` went looking for
+  `compose/lab.yml` in the working directory or a parent, found none, and said
+  "could not find a Cupel checkout". The point of publishing binaries is that
+  trying Cupel should not need a toolchain, and what shipped needed a git
+  clone instead of a Rust one.
+
+  The binary carries what it reads now — the three compose files, the lab
+  genesis, and the Prometheus and Grafana configuration `cupel observe` mounts
+  — and writes them into a directory of its own the first time it runs, named
+  by `CUPEL_HOME` or chosen from where the platform keeps application data. A
+  checkout still wins wherever there is one, so editing a compose file works
+  exactly as before. The Engine API secret is deliberately not carried: it is
+  generated per chain, and one compiled into a release would be the same
+  secret on every machine that downloaded it. `cupel genesis` is the one
+  command that still needs a checkout, because it rebuilds the allocation from
+  Foundry artifacts, and it now says so instead of failing on a missing path.
+
+  The release's own smoke test could not have caught this. It runs the binary
+  inside the checkout, where the file it wants is always a directory up, so it
+  passed for four releases while every download failed. Two checks replace it:
+  the release unpacks its own archive somewhere with no checkout above it, and
+  CI starts a whole chain that way, which is also what proves the mounts in the
+  carried compose file resolve against the directory it was written to.
+
+- **The release never checked the version it was publishing.** The step titled
+  "It runs, and it is the version on the tag" printed `cupel --version` and
+  compared it with nothing. A tag placed on a commit whose `Cargo.toml` still
+  held the previous number would have published a binary that disagreed with
+  the release it was attached to. It compares them now and refuses.
+
+- **Publishing did not wait for CI.** `v0.7.0` published while CI on its own
+  commit was red. Building four binaries proves they compile and run; it says
+  nothing about the devnet reaching finality or the committed bundle matching
+  its source. The publish job now waits for the CI run on the tagged commit,
+  and refuses to publish a commit CI rejected.
+
+### Changed
+
+- The workflows use current actions again: checkout v7, setup-node v7,
+  upload-artifact v7, download-artifact v8 and action-gh-release v3. GitHub was
+  forcing the old ones onto Node 24 and warning about it on every run.
+
+---
+
 ## [0.7.0] — The control room
 
 ### Added
