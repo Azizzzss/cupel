@@ -54,9 +54,36 @@ export function busiestGas(blocks: ExecutionHead[]): number {
   return blocks.reduce((most, block) => Math.max(most, block.gasUsed), 0)
 }
 
+/**
+ * The steps a full-height box is allowed to mean, in gas.
+ *
+ * Round numbers a reader can hold: a hundred thousand, then two, then five, and
+ * so on to a block that fills its gas limit.
+ */
+const STEPS = [
+  100_000, 200_000, 500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000, 15_000_000, 30_000_000,
+]
+
+/**
+ * What a box at full height means.
+ *
+ * Scaling straight to the busiest block in view looks right and is not. The
+ * window holds fifty blocks and moves every second, so when the busiest one
+ * falls off the end, every remaining box silently grows — a block that has not
+ * changed appears to have changed, which is the one thing a picture of a chain
+ * must never do.
+ *
+ * The reference climbs in steps instead. Heights then hold still for minutes at
+ * a time, and the legend prints the number, so when they do move the reader can
+ * see what moved.
+ */
+export function scaleFor(busiest: number): number {
+  return STEPS.find((step) => step >= busiest) ?? Math.max(busiest, STEPS[STEPS.length - 1])
+}
+
 /** The block window as a lane, newest first — the order the store keeps. */
 export function lane(blocks: ExecutionHead[]): Placed[] {
-  const busiest = busiestGas(blocks)
+  const busiest = scaleFor(busiestGas(blocks))
   const last = Math.max(1, blocks.length - 1)
   return blocks.map((block, index) => ({
     number: block.number,
@@ -124,11 +151,13 @@ export function laneCentre(count: number): number {
 /**
  * How far back the camera sits to hold a lane of this length.
  *
- * Further back than the lane is long. That sounds obvious and was not: an
- * earlier version backed off by less than half the length, which put the camera
- * *inside* the ribbon a couple of blocks from its newest end, and the page
- * showed four enormous boxes and called it the chain.
+ * Comfortably outside the ribbon — which sounds obvious and was not: an early
+ * version backed off by less than half the length, so the camera sat *inside*
+ * the lane a couple of blocks from its newest end, and the page showed four
+ * enormous boxes and called it the chain. Standing off by the whole length
+ * fixed that and overshot: fifty blocks then sat in the middle distance, too
+ * small to point at. This is the near end of the range that still clears it.
  */
 export function cameraDistance(count: number): number {
-  return 6 + laneDepth(count)
+  return 6 + laneDepth(count) * 0.72
 }

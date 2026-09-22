@@ -682,6 +682,7 @@ pre.wire {
    somewhere to run away to, and `touch-action: none` so dragging the scene on a
    touchscreen turns it rather than scrolling the page past it. */
 .canvas-frame {
+  position: relative;
   height: min(62vh, 560px);
   min-height: 320px;
   margin-bottom: 1.1rem;
@@ -711,4 +712,32 @@ pre.wire {
   gap: 0.4rem;
   font-size: 0.88rem;
   color: var(--muted);
+}
+
+/* What the pointer is over. Placed against the frame rather than the page, so
+   it cannot be left behind when the page scrolls, and never under the pointer
+   itself — a tooltip that sits where the cursor is takes the next hover with
+   it. */
+.scene-tip {
+  position: absolute;
+  z-index: 2;
+  transform: translate(0.8rem, -2.6rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.scene-tip .name {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--ink);
 }

@@ -1,10 +1,12 @@
-import { Canvas, useFrame } from '@react-three/fiber'
+import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Group, MathUtils, type Mesh } from 'three'
+import { withCommas } from '../lib/format'
 import {
   busiestGas,
   cameraDistance,
   lane,
+  scaleFor,
   laneCentre,
   laneDepth,
   SPACING,
@@ -32,8 +34,31 @@ export default function Depth() {
   const { blocks, mode, nodes } = useChain()
   const placed = useMemo(() => lane(blocks), [blocks])
   const idle = placed.length > 0 && busiestGas(blocks) === 0
+  const scale = scaleFor(busiestGas(blocks))
   const palette = usePalette()
   const [supported] = useState(webglAvailable)
+  const [hover, setHover] = useState<Hover | undefined>(undefined)
+  const frame = useRef<HTMLDivElement>(null)
+  // Shared with the scene: the camera reads it every frame, and a click has to
+  // know whether the pointer was turning the view rather than picking a block.
+  const view = useRef<View>({ yaw: 0.75, pitch: 0.34, held: false, engaged: false, moved: 0 })
+
+  const show = (block: Placed, event: ThreeEvent<PointerEvent>) => {
+    event.stopPropagation()
+    const box = frame.current?.getBoundingClientRect()
+    setHover({
+      block,
+      x: event.clientX - (box?.left ?? 0),
+      y: event.clientY - (box?.top ?? 0),
+    })
+  }
+
+  const open = (block: Placed) => {
+    // A drag that ends on a box is somebody turning the scene, not choosing a
+    // block. Without this, every attempt to look round it opens a page.
+    if (view.current.moved > 4) return
+    window.location.hash = `#/block/${block.number}`
+  }
 
   const clients = nodes.map((node) => {
     const head = node.row.value?.execution
@@ -71,7 +96,7 @@ export default function Depth() {
           </div>
         </section>
       ) : (
-        <div className="canvas-frame">
+        <div className="canvas-frame" ref={frame}>
           <Canvas
             camera={{ position: [0, 3.4, cameraDistance(placed.length)], fov: 42 }}
             dpr={[1, 2]}
@@ -91,9 +116,21 @@ export default function Depth() {
             <ambientLight intensity={1.05} />
             <directionalLight position={[5, 9, 7]} intensity={1.3} />
             <directionalLight position={[-7, 4, -5]} intensity={0.45} color={palette.glow} />
-            <Rig centre={laneCentre(placed.length)} fit={cameraDistance(placed.length)}>
+            <Rig
+              centre={laneCentre(placed.length)}
+              fit={cameraDistance(placed.length)}
+              view={view}
+              still={hover !== undefined}
+            >
               <Floor palette={palette} length={laneDepth(placed.length)} />
-              <Lane placed={placed} palette={palette} />
+              <Lane
+                placed={placed}
+                palette={palette}
+                hovered={hover?.block.number}
+                onShow={show}
+                onHide={() => setHover(undefined)}
+                onOpen={open}
+              />
               {clients.map((client, index) => (
                 <Marker
                   key={client.name}
@@ -105,6 +142,18 @@ export default function Depth() {
               ))}
             </Rig>
           </Canvas>
+          {hover && (
+            <div className="scene-tip" style={{ left: hover.x, top: hover.y }}>
+              <span className="name">#{hover.block.number}</span>
+              <span>
+                {hover.block.transactions === 0
+                  ? 'empty'
+                  : `${hover.block.transactions} transaction${hover.block.transactions === 1 ? '' : 's'}`}
+              </span>
+              <span className="faint">{withCommas(hover.block.gasUsed)} gas</span>
+              <span className="faint">click to open it</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -122,7 +171,13 @@ export default function Depth() {
               <Swatch colour={palette.surface2} /> an empty block — still a block,
               still proposed on time
             </li>
-            <li>height is gas used, against the busiest block in the window</li>
+            <li>
+              height is gas used — a box at full height is{' '}
+              <span className="mono">{withCommas(scale)}</span> gas
+            </li>
+            <li className="faint">
+              point at a block for its number, and click to open it
+            </li>
           </ul>
           {idle && (
             <p className="panel-note" style={{ marginTop: '0.8rem' }}>
@@ -220,28 +275,81 @@ function Floor({ palette, length }: { palette: Palette; length: number }) {
   )
 }
 
-/** The lane itself: one box per block. */
-function Lane({ placed, palette }: { placed: Placed[]; palette: Palette }) {
+/** What the pointer is over, and where on the frame to say so. */
+interface Hover {
+  block: Placed
+  x: number
+  y: number
+}
+
+/** The lane itself: one box per block, each one something to point at. */
+function Lane({
+  placed,
+  palette,
+  hovered,
+  onShow,
+  onHide,
+  onOpen,
+}: {
+  placed: Placed[]
+  palette: Palette
+  hovered: number | undefined
+  onShow: (block: Placed, event: ThreeEvent<PointerEvent>) => void
+  onHide: () => void
+  onOpen: (block: Placed) => void
+}) {
   return (
     <group>
-      {placed.map((block) => (
-        <mesh key={block.hash || block.number} position={[0, block.height / 2, block.z]}>
-          <boxGeometry args={[0.46, block.height, 0.5]} />
-          {/* Grey for empty, the cupellation orange for a block that carried
-              something. An empty block used to take the surface colour, which
-              in the dark theme is a dark box on a dark floor. */}
-          <meshStandardMaterial
-            color={block.transactions > 0 ? palette.glow : palette.faint}
-            emissive={palette.glow}
-            emissiveIntensity={block.transactions > 0 ? 0.3 : 0}
-            roughness={0.6}
-            metalness={0.05}
-          />
-        </mesh>
-      ))}
+      {placed.map((block) => {
+        const busy = block.transactions > 0
+        const lit = hovered === block.number
+        return (
+          <group key={block.hash || block.number}>
+            {/* What the pointer actually hits. A block is half a unit wide and
+                an empty one a quarter of a unit tall, which at the far end of
+                the lane is two or three pixels: a feature nobody can point at
+                is not a feature. This stands in front of it, invisible,
+                roughly a finger wide. `visible={false}` would take it out of
+                the raycast as well, so it is a transparent material instead. */}
+            <mesh
+              position={[0, HIT_HEIGHT / 2, block.z]}
+              onPointerOver={(event) => onShow(block, event)}
+              onPointerOut={onHide}
+              onClick={() => onOpen(block)}
+            >
+              <boxGeometry args={[0.9, HIT_HEIGHT, SPACING]} />
+              <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+            </mesh>
+            <mesh position={[0, block.height / 2, block.z]}>
+              <boxGeometry args={[0.46, block.height, 0.5]} />
+            {/* Grey for empty, the cupellation orange for a block that carried
+                something. An empty block used to take the surface colour, which
+                in the dark theme is a dark box on a dark floor. The one under
+                the pointer lights up: a tooltip beside a lane of identical
+                boxes leaves the reader guessing which one it is about. */}
+            <meshStandardMaterial
+              color={lit ? palette.bead : busy ? palette.glow : palette.faint}
+              emissive={lit ? palette.bead : palette.glow}
+              emissiveIntensity={lit ? 0.85 : busy ? 0.3 : 0}
+              roughness={0.6}
+              metalness={0.05}
+              />
+            </mesh>
+          </group>
+        )
+      })}
     </group>
   )
 }
+
+/**
+ * How tall the invisible hit box stands.
+ *
+ * Taller than most blocks on purpose: pointing somewhere above an empty slab is
+ * still pointing at that block, and the alternative is asking a reader to hit a
+ * shape a quarter of a unit high.
+ */
+const HIT_HEIGHT = 1.6
 
 /** One client, above the block it calls the head. */
 function Marker({
@@ -296,12 +404,24 @@ function Marker({
  * and takes it over: a view somebody chose is not something to reset every time
  * a block arrives.
  */
-function Rig({ children, centre, fit }: { children: React.ReactNode; centre: number; fit: number }) {
+function Rig({
+  children,
+  centre,
+  fit,
+  view,
+  still,
+}: {
+  children: React.ReactNode
+  centre: number
+  fit: number
+  view: React.RefObject<View>
+  /** Held for a moment while the reader is reading something. */
+  still: boolean
+}) {
   const group = useRef<Group>(null)
   const drift = useRef(0)
   const sway = useRef(0)
   const newest = useRef<number | undefined>(undefined)
-  const view = useRef<View>({ yaw: 0.75, pitch: 0.34, held: false, engaged: false })
   const resting = useRef(fit)
   const { blocks } = useChain()
   const reduced = usePrefersReducedMotion()
@@ -312,7 +432,7 @@ function Rig({ children, centre, fit }: { children: React.ReactNode; centre: num
 
   // Drag and wheel are wired by a plain function rather than a hook, so the
   // view it writes to is the ref this component owns.
-  useEffect(() => orbitControls(view, resting), [])
+  useEffect(() => orbitControls(view, resting), [view])
 
   const top = blocks[0]?.number
   useEffect(() => {
@@ -325,7 +445,9 @@ function Rig({ children, centre, fit }: { children: React.ReactNode; centre: num
   useFrame((state, delta) => {
     const step = Math.min(delta, 0.1)
     drift.current = MathUtils.damp(drift.current, 0, 6, step)
-    if (!reduced && !view.current.held) sway.current += step * SWAY_SPEED
+    // Nothing moves while a block is being read: a scene that drifts on takes
+    // the box out from under the pointer mid-sentence.
+    if (!reduced && !view.current.held && !still) sway.current += step * SWAY_SPEED
 
     if (group.current) group.current.position.z = drift.current + centre
 
@@ -367,6 +489,8 @@ interface View {
   held: boolean
   /** Whether the reader has taken hold of the scene — see the wheel handler. */
   engaged: boolean
+  /** Pixels travelled since the pointer went down, so a drag is not a click. */
+  moved: number
 }
 
 /**
@@ -389,11 +513,13 @@ function orbitControls(
     last = { x: pointer.clientX, y: pointer.clientY }
     view.current.held = true
     view.current.engaged = true
+    view.current.moved = 0
     canvas.setPointerCapture?.(pointer.pointerId)
   }
   const move = (event: Event) => {
     const pointer = event as PointerEvent
     if (!last) return
+    view.current.moved += Math.abs(pointer.clientX - last.x) + Math.abs(pointer.clientY - last.y)
     view.current.yaw -= (pointer.clientX - last.x) * 0.006
     view.current.pitch = clamp(view.current.pitch + (pointer.clientY - last.y) * 0.004, 0.04, 1.2)
     last = { x: pointer.clientX, y: pointer.clientY }

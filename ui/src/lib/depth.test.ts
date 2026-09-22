@@ -9,6 +9,7 @@ import {
   laneDepth,
   SPACING,
   sameHash,
+  scaleFor,
   standing,
 } from './depth'
 
@@ -58,6 +59,42 @@ describe('busiestGas', () => {
   })
 })
 
+describe('scaleFor', () => {
+  it('holds still while the busiest block changes under it', () => {
+    // The point of the steps. Scaled straight to the busiest block in view,
+    // every one of these windows would draw its blocks at a different height,
+    // so a block that never changed would appear to.
+    const same = [34_238, 63_927, 92_673, 98_165].map(scaleFor)
+    expect(new Set(same).size).toBe(1)
+  })
+
+  it('never leaves a block taller than full height', () => {
+    for (const gas of [0, 1, 99_999, 100_001, 3_000_000, 29_999_999, 45_000_000]) {
+      expect(scaleFor(gas)).toBeGreaterThanOrEqual(gas)
+    }
+  })
+
+  it('climbs when a window genuinely needs more room', () => {
+    expect(scaleFor(220_662)).toBeGreaterThan(scaleFor(98_165))
+    expect(scaleFor(9_000_000)).toBeGreaterThan(scaleFor(900_000))
+  })
+
+  it('gives an idle chain a floor rather than zero', () => {
+    // Nothing sent, nothing used: without a floor the scale would be zero and
+    // every height a division by it.
+    expect(scaleFor(0)).toBeGreaterThan(0)
+  })
+
+  it('never shrinks as the busiest block grows', () => {
+    let previous = 0
+    for (const gas of [0, 50_000, 150_000, 400_000, 900_000, 4_000_000, 20_000_000]) {
+      const scale = scaleFor(gas)
+      expect(scale).toBeGreaterThanOrEqual(previous)
+      previous = scale
+    }
+  })
+})
+
 describe('lane', () => {
   it('runs the newest block away from the camera', () => {
     const placed = lane([block(9), block(8), block(7)])
@@ -98,10 +135,11 @@ describe('cameraDistance', () => {
     expect(cameraDistance(10)).toBeGreaterThan(cameraDistance(1))
   })
 
-  it('can see the whole of it', () => {
-    // Far enough that the length of the lane fits in front of the camera.
-    for (const count of [2, 12, 50]) {
-      expect(cameraDistance(count)).toBeGreaterThan(laneDepth(count))
+  it('clears the near end with room to spare', () => {
+    // The camera looks at the middle, so the near end is half a lane closer
+    // than it is. Sitting level with that end is sitting among the blocks.
+    for (const count of [2, 12, 50, 200]) {
+      expect(cameraDistance(count)).toBeGreaterThan(laneCentre(count) + 3)
     }
   })
 })
