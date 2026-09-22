@@ -229,6 +229,16 @@ jobs:
         # written to rather than against wherever somebody happened to be.
         run: |
           set -eu
+          # The chain from the first step is still running. `cupel down` stops
+          # the container; the thing holding 8545 is the process that was
+          # started in the background up there, and the bind error this step hit
+          # says so in as many words: "cupel down and cupel network down stop
+          # containers, not a process holding a port". Interrupt it the way a
+          # person would, and give it a moment to put its container away.
+          pkill -INT -x cupel || true
+          sleep 3
+          pkill -x cupel || true
+
           ./target/debug/cupel observe --down || true
           ./target/debug/cupel down
 
