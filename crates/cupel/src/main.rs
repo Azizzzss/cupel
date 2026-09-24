@@ -15,6 +15,7 @@ mod contracts;
 mod home;
 mod lab;
 mod network;
+mod traffic;
 mod web;
 
 use anyhow::{Context, Result, bail};
@@ -148,6 +149,31 @@ enum Commands {
         #[command(subcommand)]
         command: NetworkCommand,
     },
+    /// Send real transactions in bursts, so blocks have something in them.
+    ///
+    /// Payments, mints, transfers, vault deposits and redemptions, wrapped
+    /// ether — signed here with development accounts 0, 1 and 3 and sent as
+    /// raw transactions, to either chain. Now and then one reverts and one
+    /// waits behind a nonce gap, on purpose, because those are the two things
+    /// people are most surprised by; `--clean` turns them off.
+    Traffic {
+        /// The JSON-RPC to send to. The gateway, in either mode.
+        #[arg(long, default_value = GATEWAY_URL)]
+        rpc: String,
+
+        /// Stop after this many seconds. Until Ctrl-C when not given.
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+        duration: Option<u64>,
+
+        /// The most transactions in one burst. Bursts come every second or
+        /// two and range from none to this.
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u32).range(1..=200))]
+        burst: u32,
+
+        /// Every transaction meant to succeed: no deliberate reverts, no gaps.
+        #[arg(long)]
+        clean: bool,
+    },
     /// Rewrite the genesis file from the compiled contracts.
     ///
     /// Only needed after changing a contract; the result is committed so a
@@ -238,6 +264,20 @@ async fn main() -> Result<()> {
             NetworkCommand::Reset => network::down(&root, true).await,
             NetworkCommand::Status => network::status(&root).await,
         },
+        Commands::Traffic {
+            rpc,
+            duration,
+            burst,
+            clean,
+        } => {
+            traffic::run(traffic::Options {
+                rpc,
+                duration: duration.map(Duration::from_secs),
+                burst,
+                clean,
+            })
+            .await
+        }
         Commands::Genesis => {
             // The one command the carried files cannot serve: it rebuilds the
             // allocation from the Foundry artifacts in `contracts/out`, which

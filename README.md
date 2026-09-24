@@ -116,6 +116,28 @@ cast send 0x00000000000000000000000000000000c0de0020 'mint(address,uint256)' $YO
 
 MetaMask connects at chain id **31337**; import any key above.
 
+A chain nobody uses makes empty blocks. To see one that is busy, leave this
+running in a second terminal:
+
+```bash
+cupel traffic
+```
+
+```
+  #0  n12    Vault.deposit, 78 CUP
+  #3  n3     Token.transfer → #2, 4 CUP  — skips nonce 2
+            accepted, and parked in `queued`: nothing from #3 can run until nonce 2 arrives
+  #0  n13    Vault.deposit of nothing — refused, reverts on purpose
+            it will still be mined, and still pay for the gas it burns — a revert undoes effects, not inclusion
+  #1  n2     Token.transfer → #3, 46 CUP
+  #3  n2     Weth.deposit, 0.07 ETH  — fills the gap
+            nonce 2 is here, so 3 can run: both leave `queued` together
+```
+
+Payments, mints, transfers, vault deposits and redemptions and wrapped ether,
+from three accounts, in bursts. The occasional revert and nonce gap are on
+purpose; `--clean` leaves them out.
+
 ---
 
 ## The control room
@@ -672,6 +694,8 @@ hide exactly the kind of difference this mode exists to surface.
 | `cupel status` | is it up, and where has it got to |
 | `cupel lab` | list the walkthroughs |
 | `cupel lab 1` | run one — real work against a running chain, narrated |
+| `cupel traffic` | send real transactions in bursts until Ctrl-C, so blocks carry something |
+| `cupel traffic --clean --duration 60` | only transactions meant to succeed, for a minute; fails if any did not |
 | `cupel contracts` | list the reference contracts and their addresses |
 | `cupel genesis` | rewrite the genesis allocation from the compiled contracts |
 | `cupel observe` | start Prometheus and Grafana against the gateway and the nodes |

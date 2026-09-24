@@ -11,6 +11,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`cupel traffic`: a chain with something happening on it.** Every picture of
+  an idle chain is the same flat line, so this sends what a used one carries —
+  ether payments, token mints and transfers, vault deposits and redemptions,
+  wrapping and unwrapping ether — from development accounts 0, 1 and 3 at once,
+  in bursts of none to five every second or two. Blocks stand tall or stay
+  empty, and gas varies because the work does. Account 2 never sends: it is the
+  signer's key, and its audit log stays about the signer.
+
+  Now and then it does, on purpose, the two things people are most surprised
+  by: a transaction that reverts, which is still mined and still pays for its
+  gas, and one sent with a nonce too far ahead, which is accepted, parks in
+  `queued` and runs only once the gap in front of it is filled. Each is
+  explained the first time it happens. `--clean` turns both off, and a clean run
+  exits non-zero if anything reverted or was accepted and never included — the
+  second being how geth reports a tip below its floor, which is not at all. At
+  the end it asks for every receipt and says what became of each transaction.
+
+  Everything is signed locally and sent raw, so it needs no Foundry, and it
+  works against either chain: `--rpc http://127.0.0.1:8555` sends to a devnet
+  node directly. It replaces the throwaway script that fed the 3D page.
+
 - **The chain as a solid object.** A page that draws the block window in three
   dimensions: one box per block, running away from the camera in the order they
   were made, as tall as the gas each used, orange where a block carried

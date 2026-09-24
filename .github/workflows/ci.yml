@@ -183,6 +183,24 @@ jobs:
 
           echo "integration checks passed"
 
+      - name: Traffic lands, all of it
+        # `cupel traffic --clean` exits non-zero if any transaction reverts or
+        # is accepted and never included. Either means the calldata, the
+        # approval, a gas limit or the fee is wrong — and the ordinary run
+        # reverts on purpose, so only the clean one can say so.
+        run: |
+          ./target/debug/cupel traffic --clean --duration 20 --burst 8 | tee traffic.log
+          sent=$(grep -oE '^  [0-9]+ sent' traffic.log | grep -oE '[0-9]+')
+          echo "sent $sent"
+          test "$sent" -ge 20
+          # And the blocks carry it: gas that varies, not one flat line.
+          head=$(cast block-number --rpc-url http://127.0.0.1:8545)
+          distinct=$(for n in $(seq $((head - 30)) "$head"); do
+            cast block "$n" gasUsed --rpc-url http://127.0.0.1:8545
+          done | sort -u | wc -l)
+          echo "$distinct distinct gasUsed values in the last 31 blocks"
+          test "$distinct" -ge 5
+
       - name: Every dashboard panel resolves
         # A dashboard cannot fail loudly: rename a metric and the panel does not
         # error, it draws an empty box that looks like a quiet chain. So the
@@ -455,6 +473,11 @@ jobs:
             --rpc-url $RPC --private-key $KEY --timeout 120 >/dev/null
           test "$(cast call 0x00000000000000000000000000000000c0de0020 'balanceOf(address)(uint256)' $ME --rpc-url $RPC)" \
             = "1000000000000000000000 [1e21]"
+
+      - name: Traffic lands on the devnet too
+        # Sent to node1 and gossiped: the proposer of any given slot may be
+        # any of the three, so everything included went through devp2p first.
+        run: ./target/debug/cupel traffic --clean --rpc http://127.0.0.1:8555 --duration 60
 
       - name: Every dashboard panel resolves
         # Same check as the lab job, against the mode that has consensus clients:
