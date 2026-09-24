@@ -161,3 +161,24 @@ export function laneCentre(count: number): number {
 export function cameraDistance(count: number): number {
   return 6 + laneDepth(count) * 0.72
 }
+
+/** When the scene draws: every frame, only when something changes, or not at all. */
+export type Frameloop = 'always' | 'demand' | 'never'
+
+/**
+ * How often to draw, given whether anybody can see the scene.
+ *
+ * A WebGL canvas left to itself draws sixty times a second for as long as the
+ * page is open — and a browser only stops that for a tab in the background, not
+ * for a canvas scrolled out of view while somebody reads the legend under it,
+ * which on a laptop is a fan and a battery spent on pixels nobody sees. So it
+ * stops outright when hidden or off screen.
+ *
+ * With reduced motion asked for, the scene has no idle movement to show, so it
+ * draws only when something changes: a block arrives, the reader drags, a
+ * glide settles.
+ */
+export function frameloopFor(seen: { hidden: boolean; onScreen: boolean; reduced: boolean }): Frameloop {
+  if (seen.hidden || !seen.onScreen) return 'never'
+  return seen.reduced ? 'demand' : 'always'
+}

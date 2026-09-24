@@ -3,6 +3,7 @@ import type { ExecutionHead } from '../api/chain'
 import {
   busiestGas,
   cameraDistance,
+  frameloopFor,
   heightFor,
   lane,
   laneCentre,
@@ -171,5 +172,26 @@ describe('standing', () => {
   it('says nothing about a client that did not answer', () => {
     expect(standing(placed, undefined)).toBe('silent')
     expect(standing([], { number: 8, hash: '0x8' })).toBe('silent')
+  })
+})
+
+describe('frameloopFor', () => {
+  const seen = { hidden: false, onScreen: true, reduced: false }
+
+  it('draws every frame while somebody is looking', () => {
+    expect(frameloopFor(seen)).toBe('always')
+  })
+
+  it('stops outright when nobody can see it', () => {
+    // The browser pauses a background tab by itself; a canvas scrolled out of
+    // view in a tab that is still in front, it does not.
+    expect(frameloopFor({ ...seen, onScreen: false })).toBe('never')
+    expect(frameloopFor({ ...seen, hidden: true })).toBe('never')
+    expect(frameloopFor({ ...seen, hidden: true, reduced: true })).toBe('never')
+  })
+
+  it('draws only on change when motion is not wanted', () => {
+    expect(frameloopFor({ ...seen, reduced: true })).toBe('demand')
+    expect(frameloopFor({ ...seen, reduced: true, onScreen: false })).toBe('never')
   })
 })

@@ -1,10 +1,11 @@
-import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Group, MathUtils, type Mesh } from 'three'
 import { withCommas } from '../lib/format'
 import {
   busiestGas,
   cameraDistance,
+  frameloopFor,
   lane,
   scaleFor,
   laneCentre,
@@ -39,6 +40,16 @@ export default function Depth() {
   const [supported] = useState(webglAvailable)
   const [hover, setHover] = useState<Hover | undefined>(undefined)
   const frame = useRef<HTMLDivElement>(null)
+  // The frame as state as well as a ref: the visibility observer has to start
+  // when it appears, which is after the first block rather than on mount.
+  const [frameElement, setFrameElement] = useState<HTMLDivElement | null>(null)
+  const attachFrame = useCallback((node: HTMLDivElement | null) => {
+    frame.current = node
+    setFrameElement(node)
+  }, [])
+  const reduced = usePrefersReducedMotion()
+  const seen = useSeen(frameElement)
+  const frameloop = frameloopFor({ ...seen, reduced })
   // Shared with the scene: the camera reads it every frame, and a click has to
   // know whether the pointer was turning the view rather than picking a block.
   const view = useRef<View>({ yaw: 0.75, pitch: 0.34, held: false, engaged: false, moved: 0 })
@@ -96,8 +107,9 @@ export default function Depth() {
           </div>
         </section>
       ) : (
-        <div className="canvas-frame" ref={frame}>
+        <div className="canvas-frame" ref={attachFrame} data-frameloop={frameloop}>
           <Canvas
+            frameloop={frameloop}
             camera={{ position: [0, 3.4, cameraDistance(placed.length)], fov: 42 }}
             dpr={[1, 2]}
             gl={{ antialias: true }}
@@ -121,6 +133,7 @@ export default function Depth() {
               fit={cameraDistance(placed.length)}
               view={view}
               still={hover !== undefined}
+              reduced={reduced}
             >
               <Floor palette={palette} length={laneDepth(placed.length)} />
               <Lane
@@ -138,6 +151,7 @@ export default function Depth() {
                   standing={client.standing}
                   lateral={index - (clients.length - 1) / 2}
                   palette={palette}
+                  reduced={reduced}
                 />
               ))}
             </Rig>
@@ -357,11 +371,13 @@ function Marker({
   standing: where,
   lateral,
   palette,
+  reduced,
 }: {
   placed: Placed[]
   standing: Standing
   lateral: number
   palette: Palette
+  reduced: boolean
 }) {
   const mesh = useRef<Mesh>(null)
   // Ahead sits just in front of the newest block, behind at the far end: the
@@ -373,8 +389,10 @@ function Marker({
     where === 'ahead' ? SPACING : where === 'behind' ? (back?.z ?? 0) - SPACING : (front?.z ?? 0)
   const height = (front?.height ?? 0.5) + 1.1
 
+  // The spin is the one movement in the scene nobody asked for, so it is the
+  // first to go when motion is not wanted. It used to ignore the setting.
   useFrame((state) => {
-    if (mesh.current) {
+    if (mesh.current && !reduced) {
       mesh.current.rotation.y = state.clock.elapsedTime * 0.6
     }
   })
@@ -410,6 +428,7 @@ function Rig({
   fit,
   view,
   still,
+  reduced,
 }: {
   children: React.ReactNode
   centre: number
@@ -417,6 +436,8 @@ function Rig({
   view: React.RefObject<View>
   /** Held for a moment while the reader is reading something. */
   still: boolean
+  /** No sway, and frames only on demand — see `frameloopFor`. */
+  reduced: boolean
 }) {
   const group = useRef<Group>(null)
   const drift = useRef(0)
@@ -424,23 +445,28 @@ function Rig({
   const newest = useRef<number | undefined>(undefined)
   const resting = useRef(fit)
   const { blocks } = useChain()
-  const reduced = usePrefersReducedMotion()
+  const invalidate = useThree((state) => state.invalidate)
 
   useEffect(() => {
     resting.current = fit
   }, [fit])
 
   // Drag and wheel are wired by a plain function rather than a hook, so the
-  // view it writes to is the ref this component owns.
-  useEffect(() => orbitControls(view, resting), [view])
+  // view it writes to is the ref this component owns. They ask for a frame
+  // themselves: on demand, nothing else knows the view has moved.
+  useEffect(() => orbitControls(view, resting, invalidate), [view, invalidate])
 
+  // A new block glides in from the front — unless motion is not wanted, when it
+  // simply appears. That is also what makes drawing on demand worth anything:
+  // a lab block arrives every second and the glide takes about that long, so
+  // with it the scene would be asking for a frame almost all the time.
   const top = blocks[0]?.number
   useEffect(() => {
-    if (top !== undefined && newest.current !== undefined && top > newest.current) {
+    if (!reduced && top !== undefined && newest.current !== undefined && top > newest.current) {
       drift.current = SPACING
     }
     newest.current = top
-  }, [top])
+  }, [top, reduced])
 
   useFrame((state, delta) => {
     const step = Math.min(delta, 0.1)
@@ -460,15 +486,20 @@ function Rig({
     const yaw = view.current.yaw + (reduced ? 0 : Math.sin(sway.current) * SWAY_ARC)
     const flat = Math.cos(pitch) * distance
     const camera = state.camera
-    camera.position.x = MathUtils.damp(camera.position.x, Math.sin(yaw) * flat, 8, step)
-    camera.position.y = MathUtils.damp(
-      camera.position.y,
-      TARGET_Y + Math.sin(pitch) * distance,
-      8,
-      step,
-    )
-    camera.position.z = MathUtils.damp(camera.position.z, Math.cos(yaw) * flat, 8, step)
+    const target = [Math.sin(yaw) * flat, TARGET_Y + Math.sin(pitch) * distance, Math.cos(yaw) * flat]
+    camera.position.x = MathUtils.damp(camera.position.x, target[0], 8, step)
+    camera.position.y = MathUtils.damp(camera.position.y, target[1], 8, step)
+    camera.position.z = MathUtils.damp(camera.position.z, target[2], 8, step)
     camera.lookAt(0, TARGET_Y, 0)
+
+    // Drawing on demand, one frame per change would freeze every glide at its
+    // first step. Keep asking until the lane and the camera have arrived.
+    const settling =
+      Math.abs(drift.current) > SETTLED ||
+      Math.abs(camera.position.x - target[0]) > SETTLED ||
+      Math.abs(camera.position.y - target[1]) > SETTLED ||
+      Math.abs(camera.position.z - target[2]) > SETTLED
+    if (settling) state.invalidate()
   })
 
   return <group ref={group}>{children}</group>
@@ -480,6 +511,9 @@ const TARGET_Y = 0.6
 /** Radians either side of the resting angle, and how fast the sweep runs. */
 const SWAY_ARC = 0.3
 const SWAY_SPEED = 0.22
+
+/** Close enough, in world units, that another frame would not move a pixel. */
+const SETTLED = 0.001
 
 interface View {
   yaw: number
@@ -503,6 +537,7 @@ interface View {
 function orbitControls(
   view: React.RefObject<View>,
   resting: React.RefObject<number>,
+  invalidate: () => void,
 ): () => void {
   const canvas = document.querySelector('.canvas-frame canvas')
   if (!canvas) return () => {}
@@ -523,6 +558,7 @@ function orbitControls(
     view.current.yaw -= (pointer.clientX - last.x) * 0.006
     view.current.pitch = clamp(view.current.pitch + (pointer.clientY - last.y) * 0.004, 0.04, 1.2)
     last = { x: pointer.clientX, y: pointer.clientY }
+    invalidate()
   }
   const up = () => {
     last = undefined
@@ -541,6 +577,7 @@ function orbitControls(
     const scroll = event as WheelEvent
     scroll.preventDefault()
     view.current.zoom = clamp((view.current.zoom ?? resting.current) + scroll.deltaY * 0.01, 3, 90)
+    invalidate()
   }
 
   canvas.addEventListener('pointerdown', down)
@@ -621,6 +658,33 @@ function usePalette(): Palette {
     }
   }, [])
   return palette
+}
+
+/**
+ * Whether anybody could be looking at an element: the tab in front, and the
+ * element at least partly inside the viewport.
+ */
+function useSeen(element: HTMLElement | null): { hidden: boolean; onScreen: boolean } {
+  const [hidden, setHidden] = useState(() => document.visibilityState === 'hidden')
+  const [onScreen, setOnScreen] = useState(true)
+
+  useEffect(() => {
+    const update = () => setHidden(document.visibilityState === 'hidden')
+    document.addEventListener('visibilitychange', update)
+    return () => document.removeEventListener('visibilitychange', update)
+  }, [])
+
+  useEffect(() => {
+    if (!element || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1]
+      if (entry) setOnScreen(entry.isIntersecting)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [element])
+
+  return { hidden, onScreen }
 }
 
 function usePrefersReducedMotion(): boolean {

@@ -54,6 +54,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The 3D page drew sixty frames a second for nobody.** The browser stops a
+  background tab by itself, but not a canvas scrolled out of view while the
+  legend under it is being read — that kept drawing at full rate, which on a
+  laptop is a fan and a battery. The scene now stops outright when the tab is
+  hidden or the canvas is off screen (measured in headless Edge: 0 animation
+  frames in two seconds, against 140–290 in view), and resumes when it comes
+  back. With reduced motion asked for it draws only when something changes, and
+  a new block appears rather than gliding in — the glide takes about as long as
+  a lab block, so it would have kept the scene drawing anyway. The client
+  markers also stopped spinning under reduced motion; they used to ignore it.
+
 - **The control room fetched its own typefaces over the internet.** The page
   linked fonts.googleapis.com for IBM Plex and Fraunces. It is compiled into a
   binary and served from localhost, and this project exists to run a chain on a
