@@ -2,6 +2,10 @@
 
 **A local Ethereum laboratory — the machinery, with the lid off.**
 
+<img alt="The control room's In depth page: a lane of boxes running away from the camera, one per block, each as tall as the gas it used — orange where the block carried transactions, grey where it was empty — with new blocks arriving at the front every second while cupel traffic runs." src="docs/img/chain-in-depth.gif" width="100%">
+
+<sub>A lab chain under <code>cupel traffic</code>, drawn by the control room: one box per block, as tall as the gas it used.</sub>
+
 Ethereum is two peer-to-peer networks, a handful of ports and an authenticated
 handshake between two programs that do not trust each other. You can read about
 that. You cannot normally *watch* it, because every network that runs it is
@@ -144,6 +148,11 @@ purpose; `--clean` leaves them out.
 
 The banner prints a second address. Open it.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/control-room-overview-dark.png">
+  <img alt="The control room's overview in lab mode: a strip across the top with the mode, chain id 31337, the head block ticking and the gateway's state; a table of the last twelve blocks with their hashes, transaction counts, gas and age, some empty and some carrying three to five transactions; and the gateway panel showing geth up with its forwarded count." src="docs/img/control-room-overview-light.png" width="100%">
+</picture>
+
 A strip across the top that never scrolls away — mode, chain id, the head as it
 ticks, where the clock is in network mode, whether the gateway has upstreams,
 and how old the oldest answer on the page is — and pages down the side, every
@@ -190,6 +199,11 @@ come on request, and the page stops at five hundred and says so: this is the
 recent window, not an explorer. An explorer indexes; this asks. The explorer is
 phase G.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/control-room-block-dark.png">
+  <img alt="A block page: the header as the client sent it — hash, parent, timestamp, gas used of the limit, base fee, fee recipient named as account 0, extra data, state root and size — and a table of its seven transactions, each with its sender and recipient named as development accounts or as the Token, Vault and Weth contracts." src="docs/img/control-room-block-light.png" width="100%">
+</picture>
+
 **One page is a picture.** *In depth* draws the same window as a solid object:
 a lane running away from the camera in the order the blocks were made, each box
 as tall as the gas its block used, orange where it carried transactions and grey
@@ -211,6 +225,12 @@ never fetched. And the scene does not take the wheel until you have taken hold
 of it, because a canvas two thirds of the window tall that swallows scrolling is
 a trap with nothing on screen to explain it.
 
+And it stops drawing when nobody can see it. A browser pauses a background tab
+on its own, but not a canvas scrolled out of view while you read the legend
+under it, and sixty frames a second of that is a laptop fan. Hidden or off
+screen, the scene draws nothing; with reduced motion asked for, it draws only
+when a block arrives or you move it.
+
 three.js is larger than the rest of this interface put together, so that page is
 fetched on its own: the main bundle stays where it was and the scene is a
 separate chunk, which only a reader who opens it pays to parse. The binary
@@ -230,6 +250,11 @@ received, and lays them out in order with what each one is for:
 `forkchoiceUpdated` appears twice and the two calls do different jobs — the
 first asks for a block, the last accepts one — so the explanations are keyed by
 method *and* occurrence rather than by position.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/control-room-walkthrough-dark.png">
+  <img alt="The walkthrough page after pressing Produce a block: the block number, its transaction count, gas, four round trips and 7.4 milliseconds in total, then the four calls in order — ask for a block, collect it, offer it back, adopt it — each with its Engine API method, its time, what it is for, and the exchange that went over the wire folded underneath." src="docs/img/control-room-walkthrough-light.png" width="100%">
+</picture>
 
 Everything on the page except that button is read straight from the clients by
 the browser. The button is the exception: making a block means an authenticated

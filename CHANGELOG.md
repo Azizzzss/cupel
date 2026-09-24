@@ -32,6 +32,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   works against either chain: `--rpc http://127.0.0.1:8555` sends to a devnet
   node directly. It replaces the throwaway script that fed the 3D page.
 
+- **The README shows the thing.** A moving picture of the 3D page under
+  `cupel traffic` at the top, and the overview, a block and the walkthrough in
+  the control-room section, each in the reader's own theme. An audit flagged a
+  project about making machinery visible with not one picture of it on the
+  front page. CI now fails if the README names an image that is not in the
+  repository — a broken screenshot fails nothing on its own. `docs/shoot.mjs`
+  is how they were taken: a headless Chrome or Edge over the DevTools protocol,
+  nothing to install, with the commands for each image written at the top.
+
 - **The chain as a solid object.** A page that draws the block window in three
   dimensions: one box per block, running away from the camera in the order they
   were made, as tall as the gas each used, orange where a block carried

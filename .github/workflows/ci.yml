@@ -47,6 +47,19 @@ jobs:
           python3 docs/make-diagrams.py
           git diff --exit-code docs/img/
 
+      - name: Every image the README shows is in the repository
+        # A renamed screenshot does not fail anything: GitHub draws a broken
+        # image and a line of alt text, which on the front page of the project
+        # is the first thing anybody sees.
+        run: |
+          set -e
+          paths=$(grep -oE '(src|srcset)="docs/img/[^"]+"' README.md | cut -d'"' -f2 | sort -u)
+          test -n "$paths"
+          for path in $paths; do
+            test -f "$path" || { echo "README shows $path, which does not exist"; exit 1; }
+            echo "ok  $path"
+          done
+
   contracts:
     name: contracts
     runs-on: ubuntu-latest
