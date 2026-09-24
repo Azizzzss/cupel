@@ -58,4 +58,5 @@ thing this repository exists to talk about.
 
 If you find a way the *lab itself* could harm someone running it — something
 that reaches beyond localhost, writes outside the repository, or exfiltrates a
-key — that is worth flagging directly rather than in a public issue.
+key — report it privately instead: **Security → Report a vulnerability** on the
+repository page opens a private advisory that only the maintainer can see.

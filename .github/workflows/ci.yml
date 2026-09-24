@@ -6,13 +6,26 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Nothing here writes to the repository. Said explicitly, so the token a
+# workflow gets does not depend on a repository setting — which matters once
+# anyone can open a pull request. (Fork pull requests get a read-only token
+# and no secrets regardless; this covers pushes to main as well.)
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
+# A newer push to a pull request makes the older run pointless, so it is
+# cancelled. On main it is not: every commit there gets a verdict, and the
+# release workflow asks for the one on the commit it is publishing. Cancelling
+# on main meant that pushing more often than a full run takes — about thirty
+# minutes, most of it waiting for the devnet to finalise — left no commit with
+# a finished run at all.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   rust:

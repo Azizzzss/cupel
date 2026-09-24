@@ -382,7 +382,11 @@ and `cupel network reset` returns it to nothing.
    written here; network mode runs Lighthouse, Prysm and Teku side by side.
 4. **Gateway — upstreams are a list with capabilities** from the first commit,
    without any plugin machinery.
-5. **Private until phase B lands**, then public.
+5. **Public once the history is known to be clean.** The plan was "private
+   until phase B lands"; it stayed private through phase E and three more
+   releases, and opened after v0.8.0 once every commit had been scanned and
+   nothing found but values public by design — the four development keys every
+   Ethereum tool prints, and the genesis generator's published mnemonic.
 6. **Genesis is generated, not committed.** `config/network/` holds validator
    keys and a beacon state stamped with the moment it was made; none of it is
    meaningful a day later, and `cupel network init` rebuilds it in under a
