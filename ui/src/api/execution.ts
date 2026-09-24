@@ -1,5 +1,6 @@
 import { hexToBigInt, hexToNumber } from '../lib/hex'
 import { parseBlock, parseReceipt, parseTx, type BlockDetail, type Receipt, type TxDetail } from '../lib/parse'
+import { parsePool, type Pool } from '../lib/pool'
 import { result, rpc, type Answer } from './transport'
 
 /**
@@ -49,6 +50,26 @@ export async function nonce(rpcUrl: string, address: string): Promise<Answer<num
   if (!answer.ok) return answer
   const value = hexToNumber(result(answer))
   return value === undefined ? { ok: false, reason: 'refused' } : { ok: true, value }
+}
+
+/** Everything the node is holding and has not put in a block. */
+export async function txpoolContent(rpcUrl: string): Promise<Answer<Pool>> {
+  const answer = await rpc(rpcUrl, 'txpool_content')
+  if (!answer.ok) return answer
+  const pool = parsePool(result(answer))
+  return pool ? { ok: true, value: pool } : { ok: false, reason: 'refused' }
+}
+
+/** Just the two counts — cheap enough to ask every node for. */
+export async function txpoolStatus(rpcUrl: string): Promise<Answer<{ pending: number; queued: number }>> {
+  const answer = await rpc(rpcUrl, 'txpool_status')
+  if (!answer.ok) return answer
+  const raw = result(answer) as { pending?: unknown; queued?: unknown } | undefined
+  const pending = hexToNumber(raw?.pending)
+  const queued = hexToNumber(raw?.queued)
+  return pending === undefined || queued === undefined
+    ? { ok: false, reason: 'refused' }
+    : { ok: true, value: { pending, queued } }
 }
 
 /** A read-only call: the return data, as hex. */

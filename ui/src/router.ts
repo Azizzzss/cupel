@@ -16,6 +16,7 @@ export type Page =
   | 'blocks'
   | 'block'
   | 'tx'
+  | 'pool'
   | 'depth'
   | 'accounts'
   | 'gateway'
@@ -26,6 +27,7 @@ export type Page =
 export type Route =
   | { page: 'overview' }
   | { page: 'blocks' }
+  | { page: 'pool' }
   | { page: 'depth' }
   | { page: 'block'; number: number }
   | { page: 'tx'; hash: string }
@@ -48,6 +50,8 @@ export function parseRoute(hash: string): Route {
   switch (head) {
     case 'blocks':
       return bare ? { page: 'blocks' } : missing
+    case 'pool':
+      return bare ? { page: 'pool' } : missing
     case 'depth':
       return bare ? { page: 'depth' } : missing
     case 'accounts':

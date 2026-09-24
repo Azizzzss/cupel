@@ -15,6 +15,8 @@ describe('parseRoute', () => {
     expect(parseRoute('#/depth/')).toEqual({ page: 'depth' })
     expect(parseRoute('#/depth/extra').page).toBe('missing')
     expect(parseRoute('#/accounts')).toEqual({ page: 'accounts' })
+    expect(parseRoute('#/pool')).toEqual({ page: 'pool' })
+    expect(parseRoute('#/pool/0x12').page).toBe('missing')
     expect(parseRoute('#/gateway')).toEqual({ page: 'gateway' })
     expect(parseRoute('#/consensus')).toEqual({ page: 'consensus' })
     expect(parseRoute('#/walkthrough')).toEqual({ page: 'walkthrough' })
@@ -50,6 +52,7 @@ describe('toHash', () => {
     { page: 'blocks' },
     { page: 'block', number: 42 },
     { page: 'tx', hash: HASH },
+    { page: 'pool' },
     { page: 'accounts' },
     { page: 'gateway' },
     { page: 'consensus' },

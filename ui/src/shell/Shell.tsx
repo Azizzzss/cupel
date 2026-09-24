@@ -8,6 +8,7 @@ import { Consensus } from '../pages/Consensus'
 import { GatewayPage } from '../pages/GatewayPage'
 import { Missing } from '../pages/Missing'
 import { Overview } from '../pages/Overview'
+import { Pool } from '../pages/Pool'
 import { Tx } from '../pages/Tx'
 import { WalkthroughPage } from '../pages/WalkthroughPage'
 import { WrongMode } from '../pages/WrongMode'
@@ -66,6 +67,8 @@ function Page({ route, mode, settled }: { route: Route; mode: Mode; settled: boo
       return <Overview />
     case 'blocks':
       return <Blocks />
+    case 'pool':
+      return <Pool />
     case 'depth':
       return (
         <Suspense

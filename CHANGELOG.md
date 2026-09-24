@@ -32,6 +32,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   works against either chain: `--rpc http://127.0.0.1:8555` sends to a devnet
   node directly. It replaces the throwaway script that fed the 3D page.
 
+- **The pool, as a page.** Every other page shows transactions that ran; this
+  one shows where they wait first. `txpool_content` through the gateway, read
+  four times a second in lab mode: **pending** (ready for the next block),
+  **queued** (accepted and parked — with the nonce each one is waiting for,
+  worked out from the sender's pending run or its account nonce), and **just
+  left**, with how long each stayed. That last is shown as the range the
+  readings allow rather than a single number: two readings a few milliseconds
+  apart, one either side of a block, once timed everything at 0.0s. In network
+  mode it also shows each node's own counts, because there is no network-wide
+  pool — only each node's view of one. Calls are named (`Token.transfer`,
+  `Vault.deposit`) on this page and the transaction page.
+
+  The selectors behind those names, and the ones the page already used to read
+  the contracts, are now checked against the bytecode in the committed genesis
+  file. A comment had claimed that check existed; nothing did it.
+
 - **The README shows the thing.** A moving picture of the 3D page under
   `cupel traffic` at the top, and the overview, a block and the walkthrough in
   the control-room section, each in the reader's own theme. An audit flagged a

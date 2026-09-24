@@ -163,6 +163,7 @@ remembers:
 |---|---|
 | **Overview** | the blocks as they arrive, the gateway, and in network mode the agreement table and the clock |
 | **Blocks** | the recent window, fifty at a time and five hundred at most. Every number opens the block — the header as the client sent it, the transactions in full — and every transaction opens what was sent, what it cost, what happened, and the events the genesis contracts logged, decoded by name |
+| **Pool** | what the node has accepted and not yet put in a block: pending (ready), queued (parked behind a nonce gap, with the nonce it waits for), and what just left and how long it stayed. In network mode, each node's own count — there is no network-wide pool |
 | **In depth** | the same window as a solid object: one box per block, as tall as the gas it used. Point at one for its number, click to open it |
 | **Accounts** | the four development accounts with live balances and nonces, and the three contracts with their names, symbols and supplies read by `eth_call` |
 | **Gateway** | how many upstreams are answering, and what each has forwarded |

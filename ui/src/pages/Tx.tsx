@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { receipt as receiptOf, transaction } from '../api/execution'
 import type { Answer } from '../api/transport'
 import { Address, BlockLink } from '../components/Entity'
+import { describeCall } from '../lib/abi'
 import { formatEther, formatGwei, formatUnits, shortHash, withCommas } from '../lib/format'
 import { label } from '../lib/known'
 import { decodeLog, type DecodedLog } from '../lib/logs'
@@ -153,6 +154,9 @@ export function Tx({ hash }: { hash: string }) {
               ) : (
                 <>
                   {(tx.input.length - 2) / 2} bytes · selector {tx.input.slice(0, 10)}
+                  {describeCall(tx.to, tx.input) && (
+                    <span className="faint"> · {describeCall(tx.to, tx.input)}</span>
+                  )}
                 </>
               )}
             </dd>
