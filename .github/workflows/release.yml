@@ -140,11 +140,16 @@ jobs:
           fi
           echo "the download carries what it needs and nothing it should not"
 
+      # Only a hand-off to the publish job, which attaches the archives to the
+      # release — so a day, not the default ninety. Artifact storage is one
+      # quota across the whole account, and v0.8.0's first run was refused by
+      # it at this step with every build already passing.
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
+          retention-days: 1
 
   publish:
     name: publish
