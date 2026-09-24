@@ -206,10 +206,14 @@ jobs:
           sent=$(grep -oE '^  [0-9]+ sent' traffic.log | grep -oE '[0-9]+')
           echo "sent $sent"
           test "$sent" -ge 20
-          # And the blocks carry it: gas that varies, not one flat line.
+          # And the blocks carry it: gas that varies, not one flat line. Asked
+          # over plain JSON-RPC, because cast's flags for picking one field of
+          # a block have changed between releases and this broke on them once.
           head=$(cast block-number --rpc-url http://127.0.0.1:8545)
           distinct=$(for n in $(seq $((head - 30)) "$head"); do
-            cast block "$n" gasUsed --rpc-url http://127.0.0.1:8545
+            curl -s -X POST http://127.0.0.1:8545 -H 'content-type: application/json' \
+              -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getBlockByNumber\",\"params\":[\"$(printf '0x%x' "$n")\",false]}" \
+              | jq -r '.result.gasUsed'
           done | sort -u | wc -l)
           echo "$distinct distinct gasUsed values in the last 31 blocks"
           test "$distinct" -ge 5
