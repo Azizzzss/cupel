@@ -88,7 +88,7 @@ cargo run -p cupel --release
 ```
 
 ```
-  Cupel v0.6.0
+  Cupel v0.8.0
   ---------------------------------------------------
   RPC          http://127.0.0.1:8545
   Control room http://127.0.0.1:8544
