@@ -714,6 +714,50 @@ pre.wire {
   color: var(--muted);
 }
 
+/* A client's name over its marker. Positioned by the scene every frame: the
+   element sits on the marker, the line rises --rise pixels from it, and the
+   name sits on top of the line, reading rightwards. */
+.scene-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  pointer-events: none;
+  --rise: 16px;
+}
+
+.scene-label-line {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: var(--rise);
+  background: var(--muted);
+  opacity: 0.7;
+}
+
+.scene-label-text {
+  position: absolute;
+  left: -1px;
+  bottom: var(--rise);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+  padding: 0.12rem 0.4rem;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 0.72rem;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
+.scene-label-text .name {
+  font-family: var(--mono);
+  color: var(--ink);
+}
+
 /* What the pointer is over. Placed against the frame rather than the page, so
    it cannot be left behind when the page scrolls, and never under the pointer
    itself — a tooltip that sits where the cursor is takes the next hover with

@@ -32,6 +32,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   works against either chain: `--rpc http://127.0.0.1:8555` sends to a devnet
   node directly. It replaces the throwaway script that fed the 3D page.
 
+- **The 3D scene names its clients, and keeps time.** In network mode each
+  marker carries its client's name — `node1 Lighthouse` — on a row of its own
+  with a line down to the marker, so the scene reads without the legend under
+  it. The labels are HTML moved to each marker's place on screen every frame,
+  so they stay crisp and follow the theme; rows are handed out from the right
+  so no line ever crosses a label.
+
+  Blocks now sit at their place in time rather than one after another: one
+  box-width is the slot time on the devnet and the block time in the lab, a
+  slot nobody proposed in leaves a gap the width of a block, and a line across
+  the floor marks the moment each epoch began. The legend says how much time
+  the window covers — fifty seconds in the lab, ten minutes on the devnet —
+  which is the difference the two lanes used to hide. Absolute seconds were
+  tried on paper and rejected: at a fixed scale the devnet lane is twelve times
+  longer and every box a pixel wide.
+
 - **The pool, as a page.** Every other page shows transactions that ran; this
   one shows where they wait first. `txpool_content` through the gateway, read
   four times a second in lab mode: **pending** (ready for the next block),

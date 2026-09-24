@@ -1,12 +1,16 @@
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Group, MathUtils, type Mesh } from 'three'
+import { Group, MathUtils, Vector3, type Mesh } from 'three'
 import { withCommas } from '../lib/format'
 import {
+  blockInterval,
   busiestGas,
   cameraDistance,
+  epochBoundaries,
   frameloopFor,
   lane,
+  laneCount,
+  span,
   scaleFor,
   laneCentre,
   laneDepth,
@@ -15,8 +19,11 @@ import {
   type Placed,
   type Standing,
 } from '../lib/depth'
+import { timing } from '../lib/slots'
 import { PageHead } from '../shell/PageHead'
 import { useChain } from '../store/context'
+import { clockReading } from '../store/select'
+import { useNow } from '../usePoll'
 
 /**
  * The chain, as a solid object.
@@ -33,7 +40,27 @@ import { useChain } from '../store/context'
  */
 export default function Depth() {
   const { blocks, mode, nodes } = useChain()
-  const placed = useMemo(() => lane(blocks), [blocks])
+  // The consensus clock, in network mode: the slot time spaces the lane and the
+  // epoch length marks it. Read from whichever beacon node answered.
+  // The constants do not change; which node is fresh might, so re-judge now and then.
+  const now = useNow(10_000)
+  const reading = clockReading(nodes, now)
+  const t = reading ? timing(reading.beacon) : undefined
+  const secondsPerSlot = t?.secondsPerSlot
+  const slotsPerEpoch = t?.slotsPerEpoch
+  const genesisTime = t?.genesisTime
+  const clock = useMemo(
+    () =>
+      secondsPerSlot !== undefined && slotsPerEpoch !== undefined && genesisTime !== undefined
+        ? { secondsPerSlot, slotsPerEpoch, genesisTime }
+        : undefined,
+    [secondsPerSlot, slotsPerEpoch, genesisTime],
+  )
+  const placed = useMemo(() => lane(blocks, clock), [blocks, clock])
+  const boundaries = useMemo(() => epochBoundaries(placed, clock), [placed, clock])
+  const count = laneCount(placed)
+  const interval = clock?.secondsPerSlot ?? blockInterval(blocks)
+  const covers = placed.length > 1 ? placed[0].timestamp - placed[placed.length - 1].timestamp : 0
   const idle = placed.length > 0 && busiestGas(blocks) === 0
   const scale = scaleFor(busiestGas(blocks))
   const palette = usePalette()
@@ -80,6 +107,27 @@ export default function Depth() {
     }
   })
 
+  // The markers' meshes and their labels, found by client name. The scene
+  // moves the labels itself every frame, so nothing re-renders to do it.
+  const markerMeshes = useRef(new Map<string, Mesh>())
+  const labelElements = useRef(new Map<string, HTMLDivElement>())
+  const registerMarker = useCallback((name: string, mesh: Mesh | null) => {
+    if (mesh) markerMeshes.current.set(name, mesh)
+    else markerMeshes.current.delete(name)
+  }, [])
+  const placeLabels = useCallback((onScreen: LabelPlace[]) => {
+    for (const [name, element] of labelElements.current) {
+      const at = onScreen.find((label) => label.name === name)
+      if (!at) {
+        element.style.display = 'none'
+        continue
+      }
+      element.style.display = ''
+      element.style.transform = `translate(${at.x.toFixed(1)}px, ${(at.y - MARKER_RADIUS_PX).toFixed(1)}px)`
+      element.style.setProperty('--rise', `${LABEL_FIRST_RISE + at.row * LABEL_ROW}px`)
+    }
+  }, [])
+
   return (
     <>
       <PageHead
@@ -110,7 +158,7 @@ export default function Depth() {
         <div className="canvas-frame" ref={attachFrame} data-frameloop={frameloop}>
           <Canvas
             frameloop={frameloop}
-            camera={{ position: [0, 3.4, cameraDistance(placed.length)], fov: 42 }}
+            camera={{ position: [0, 3.4, cameraDistance(count)], fov: 42 }}
             dpr={[1, 2]}
             gl={{ antialias: true }}
           >
@@ -120,7 +168,7 @@ export default function Depth() {
                 does not. */}
             <fog
               attach="fog"
-              args={[palette.bg, cameraDistance(placed.length) * 0.5, cameraDistance(placed.length) * 2.1]}
+              args={[palette.bg, cameraDistance(count) * 0.5, cameraDistance(count) * 2.1]}
             />
             {/* Enough ambient light that the short sides of an empty block are
                 lit as well as its top: with only a lamp overhead, a low slab is
@@ -129,13 +177,16 @@ export default function Depth() {
             <directionalLight position={[5, 9, 7]} intensity={1.3} />
             <directionalLight position={[-7, 4, -5]} intensity={0.45} color={palette.glow} />
             <Rig
-              centre={laneCentre(placed.length)}
-              fit={cameraDistance(placed.length)}
+              centre={laneCentre(count)}
+              fit={cameraDistance(count)}
               view={view}
               still={hover !== undefined}
               reduced={reduced}
             >
-              <Floor palette={palette} length={laneDepth(placed.length)} />
+              <Floor palette={palette} length={laneDepth(count)} />
+              {boundaries.map((boundary) => (
+                <EpochLine key={boundary.epoch} z={boundary.z} palette={palette} />
+              ))}
               <Lane
                 placed={placed}
                 palette={palette}
@@ -147,15 +198,37 @@ export default function Depth() {
               {clients.map((client, index) => (
                 <Marker
                   key={client.name}
+                  name={client.name}
                   placed={placed}
                   standing={client.standing}
                   lateral={index - (clients.length - 1) / 2}
                   palette={palette}
                   reduced={reduced}
+                  register={registerMarker}
                 />
               ))}
             </Rig>
+            <LabelTracker markers={markerMeshes} place={placeLabels} />
           </Canvas>
+          {clients.map((client) => (
+            <div
+              key={client.name}
+              className="scene-label"
+              style={{ display: 'none' }}
+              aria-hidden="true"
+              ref={(element) => {
+                if (element) labelElements.current.set(client.name, element)
+                else labelElements.current.delete(client.name)
+              }}
+            >
+              <span className="scene-label-line" />
+              <span className="scene-label-text">
+                <Swatch colour={colourFor(client.standing, palette)} />
+                <span className="name">{client.name}</span> {client.consensus}
+                {client.standing !== 'same' && <span className="faint"> · {client.standing}</span>}
+              </span>
+            </div>
+          ))}
           {hover && (
             <div className="scene-tip" style={{ left: hover.x, top: hover.y }}>
               <span className="name">#{hover.block.number}</span>
@@ -189,6 +262,23 @@ export default function Depth() {
               height is gas used — a box at full height is{' '}
               <span className="mono">{withCommas(scale)}</span> gas
             </li>
+            {placed.length > 1 && (
+              <li>
+                one box-width is <span className="mono">{span(interval)}</span> —{' '}
+                {clock ? 'the slot time' : 'the block time'} — so these {placed.length} blocks cover{' '}
+                <span className="mono">{span(covers)}</span>
+                {clock
+                  ? '. A gap is a slot that passed with nobody proposing in it.'
+                  : '. There are no slots here: a block comes when the producer asks for one.'}
+              </li>
+            )}
+            {clock && (
+              <li>
+                <Swatch colour={palette.litharge} /> a line across the floor is where an epoch began —
+                every {clock.slotsPerEpoch} slots, {span(clock.slotsPerEpoch * clock.secondsPerSlot)}
+                {boundaries.length === 0 && ' (none in this window yet)'}
+              </li>
+            )}
             <li className="faint">
               point at a block for its number, and click to open it
             </li>
@@ -289,6 +379,19 @@ function Floor({ palette, length }: { palette: Palette; length: number }) {
   )
 }
 
+/**
+ * Where an epoch began: a thin bar across the floor, wider than the lane so it
+ * reads as a line on the ground rather than another block.
+ */
+function EpochLine({ z, palette }: { z: number; palette: Palette }) {
+  return (
+    <mesh position={[0, 0.006, z]}>
+      <boxGeometry args={[3.4, 0.012, 0.07]} />
+      <meshBasicMaterial color={palette.litharge} />
+    </mesh>
+  )
+}
+
 /** What the pointer is over, and where on the frame to say so. */
 interface Hover {
   block: Placed
@@ -367,19 +470,30 @@ const HIT_HEIGHT = 1.6
 
 /** One client, above the block it calls the head. */
 function Marker({
+  name,
   placed,
   standing: where,
   lateral,
   palette,
   reduced,
+  register,
 }: {
+  name: string
   placed: Placed[]
   standing: Standing
   lateral: number
   palette: Palette
   reduced: boolean
+  register: (name: string, mesh: Mesh | null) => void
 }) {
   const mesh = useRef<Mesh>(null)
+  const attach = useCallback(
+    (node: Mesh | null) => {
+      mesh.current = node
+      register(name, node)
+    },
+    [name, register],
+  )
   // Ahead sits just in front of the newest block, behind at the far end: the
   // window cannot show where they actually are, and pretending otherwise would
   // put a client on a block this page never fetched.
@@ -399,7 +513,7 @@ function Marker({
 
   if (where === 'silent') return null
   return (
-    <mesh ref={mesh} position={[lateral * 0.75, height, z]}>
+    <mesh ref={attach} position={[lateral * 0.75, height, z]}>
       <octahedronGeometry args={[0.16]} />
       <meshStandardMaterial
         color={colourFor(where, palette)}
@@ -409,6 +523,58 @@ function Marker({
     </mesh>
   )
 }
+
+/**
+ * Names over the markers, without a text library.
+ *
+ * Three octahedra above a block say nothing until the legend under the scene is
+ * read, and the legend is below the fold. Each label is ordinary HTML over the
+ * canvas — crisp, and themed by the stylesheet — moved every frame to where its
+ * marker lands on screen.
+ *
+ * The markers sit a hand's width apart, so the labels cannot sit beside them:
+ * each gets its own row, with a thin line down to its marker. Rows are handed
+ * out from the right, lowest first, because a label reads rightwards from its
+ * line — so a line only ever rises past labels to its right, never through one.
+ */
+function LabelTracker({
+  markers,
+  place,
+}: {
+  markers: React.RefObject<Map<string, Mesh>>
+  place: (onScreen: LabelPlace[]) => void
+}) {
+  const point = useMemo(() => new Vector3(), [])
+  useFrame(({ camera, size }) => {
+    const onScreen: LabelPlace[] = []
+    for (const [name, mesh] of markers.current) {
+      mesh.getWorldPosition(point).project(camera)
+      // Behind the camera, or off the edge of the frame: say nothing rather
+      // than pin a name to the border.
+      if (point.z > 1 || Math.abs(point.x) > 1 || Math.abs(point.y) > 1) continue
+      onScreen.push({ name, x: ((point.x + 1) / 2) * size.width, y: ((1 - point.y) / 2) * size.height, row: 0 })
+    }
+    onScreen.sort((a, b) => b.x - a.x)
+    onScreen.forEach((label, row) => {
+      label.row = row
+    })
+    place(onScreen)
+  })
+  return null
+}
+
+/** Where one label goes this frame: its marker on screen, and which row it takes. */
+interface LabelPlace {
+  name: string
+  x: number
+  y: number
+  row: number
+}
+
+/** Pixels: from a marker's centre to its top, the first label's height, and each row after. */
+const MARKER_RADIUS_PX = 7
+const LABEL_FIRST_RISE = 16
+const LABEL_ROW = 24
 
 /**
  * Turning, drifting and zooming, without a controls library.

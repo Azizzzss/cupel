@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { ExecutionHead } from '../api/chain'
 import {
+  blockInterval,
   busiestGas,
   cameraDistance,
+  epochBoundaries,
   frameloopFor,
   heightFor,
   lane,
   laneCentre,
+  laneCount,
   laneDepth,
+  LONGEST_GAP,
+  span,
   SPACING,
   sameHash,
   scaleFor,
@@ -172,6 +177,63 @@ describe('standing', () => {
   it('says nothing about a client that did not answer', () => {
     expect(standing(placed, undefined)).toBe('silent')
     expect(standing([], { number: 8, hash: '0x8' })).toBe('silent')
+  })
+})
+
+describe('time in the lane', () => {
+  /** A block at a timestamp. */
+  const at = (number: number, timestamp: number): ExecutionHead => ({
+    number,
+    hash: `0x${number.toString(16)}`,
+    transactions: 0,
+    timestamp,
+    gasUsed: 0,
+  })
+
+  it('takes the usual gap as the interval, whatever the mode', () => {
+    expect(blockInterval([at(3, 3), at(2, 2), at(1, 1)])).toBe(1)
+    // Twelve-second slots with one missed: the median ignores the hole.
+    expect(blockInterval([at(4, 60), at(3, 36), at(2, 24), at(1, 12)])).toBe(12)
+    expect(blockInterval([at(1, 5)])).toBe(1)
+    // Two blocks in one second are still a second apart for this purpose.
+    expect(blockInterval([at(2, 5), at(1, 5)])).toBe(1)
+  })
+
+  it('leaves a gap where a slot passed with no block in it', () => {
+    const placed = lane([at(4, 60), at(3, 36), at(2, 24), at(1, 12)], { secondsPerSlot: 12 })
+    expect(placed.map((p) => p.z / SPACING).map((n) => Math.round(n * 100) / 100)).toEqual([0, -2, -3, -4])
+    expect(laneCount(placed)).toBe(5)
+  })
+
+  it('never stacks two blocks in one place', () => {
+    const placed = lane([at(2, 5), at(1, 5)])
+    expect(placed[1].z).toBeCloseTo(-SPACING)
+  })
+
+  it('draws a long stall shortened rather than pushing the past out of sight', () => {
+    const placed = lane([at(2, 3_600), at(1, 0)], { secondsPerSlot: 12 })
+    expect(placed[1].z).toBeCloseTo(-SPACING * LONGEST_GAP)
+  })
+
+  it('marks an epoch where it began, not beside the next block', () => {
+    const clock = { secondsPerSlot: 12, slotsPerEpoch: 32, genesisTime: 0 }
+    // Epoch 1 begins at 384 s. Blocks at 372 (epoch 0) and 396 (epoch 1),
+    // with the slot at 384 missed: the line sits exactly halfway.
+    const placed = lane([at(3, 396), at(2, 372)], clock)
+    const [boundary] = epochBoundaries(placed, clock)
+    expect(boundary.epoch).toBe(1)
+    expect(boundary.z).toBeCloseTo(placed[1].z / 2)
+  })
+
+  it('invents no epochs in lab mode', () => {
+    expect(epochBoundaries(lane([at(40, 40), at(1, 1)]), undefined)).toEqual([])
+  })
+
+  it('reads a span of time as prose', () => {
+    expect(span(49)).toBe('49 s')
+    expect(span(600)).toBe('10 min')
+    expect(span(610)).toBe('10 min 10 s')
+    expect(span(3_900)).toBe('1 h 5 min')
   })
 })
 

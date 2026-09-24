@@ -20,6 +20,8 @@ export interface Placed {
   hash: string
   transactions: number
   gasUsed: number
+  /** Seconds, as the block says. */
+  timestamp: number
   /** Along the lane: 0 is the newest block, and older ones run away from the camera. */
   z: number
   /** How tall the box stands, from the gas the block used. */
@@ -81,21 +83,122 @@ export function scaleFor(busiest: number): number {
   return STEPS.find((step) => step >= busiest) ?? Math.max(busiest, STEPS[STEPS.length - 1])
 }
 
-/** The block window as a lane, newest first — the order the store keeps. */
-export function lane(blocks: ExecutionHead[]): Placed[] {
+/** The consensus clock, where there is one: network mode's beacon spec and genesis. */
+export interface Clock {
+  secondsPerSlot: number
+  slotsPerEpoch: number
+  genesisTime: number
+}
+
+/**
+ * The usual time between blocks in a window, in seconds.
+ *
+ * The median gap rather than the mean, so a stall or a burst of blocks asked
+ * for by hand does not move it: in lab mode this is the `--block-time`, one
+ * second by default. At least one, because a chain's timestamps are whole
+ * seconds and two blocks can share one.
+ */
+export function blockInterval(blocks: ExecutionHead[]): number {
+  const gaps: number[] = []
+  for (let i = 1; i < blocks.length; i++) {
+    const gap = blocks[i - 1].timestamp - blocks[i].timestamp
+    if (gap > 0) gaps.push(gap)
+  }
+  if (gaps.length === 0) return 1
+  gaps.sort((a, b) => a - b)
+  return Math.max(1, gaps[Math.floor(gaps.length / 2)])
+}
+
+/**
+ * The longest gap drawn at its true length, in intervals. A chain stopped for
+ * an hour would otherwise push everything before the stop out past the fog.
+ */
+export const LONGEST_GAP = 6
+
+/**
+ * The block window as a lane, newest first — the order the store keeps.
+ *
+ * Blocks sit at their place in time, one spacing per interval — the slot time
+ * on the devnet, the block time in the lab. A slot nobody proposed in is a gap
+ * the width of a block, which is what a missed slot is: time that passed with
+ * no block in it. Spacing by position instead drew fifty evenly spaced boxes
+ * whether they covered fifty seconds or ten minutes with holes in them.
+ */
+export function lane(blocks: ExecutionHead[], clock?: Pick<Clock, 'secondsPerSlot'>): Placed[] {
   const busiest = scaleFor(busiestGas(blocks))
   const last = Math.max(1, blocks.length - 1)
-  return blocks.map((block, index) => ({
-    number: block.number,
-    hash: block.hash,
-    transactions: block.transactions,
-    gasUsed: block.gasUsed,
-    // Not `-index * SPACING`: at index 0 that is negative zero, which is
-    // equal to zero everywhere except a deep comparison, where it is not.
-    z: index === 0 ? 0 : -(index * SPACING),
-    height: heightFor(block.gasUsed, busiest),
-    fade: index / last,
-  }))
+  const interval = clock?.secondsPerSlot ?? blockInterval(blocks)
+  const placed: Placed[] = []
+  let z = 0
+  blocks.forEach((block, index) => {
+    if (index > 0) {
+      const gap = (blocks[index - 1].timestamp - block.timestamp) / interval
+      // At least one spacing, so two blocks sharing a second do not stand in
+      // one another; at most LONGEST_GAP, so one stall does not swallow the lane.
+      z -= SPACING * Math.min(LONGEST_GAP, Math.max(1, gap))
+    }
+    placed.push({
+      number: block.number,
+      hash: block.hash,
+      transactions: block.transactions,
+      gasUsed: block.gasUsed,
+      timestamp: block.timestamp,
+      // `0` rather than `z` for the first: negative zero is equal to zero
+      // everywhere except a deep comparison, where it is not.
+      z: index === 0 ? 0 : z,
+      height: heightFor(block.gasUsed, busiest),
+      fade: index / last,
+    })
+  })
+  return placed
+}
+
+/**
+ * How many block-widths the lane spans, gaps included — the count the camera,
+ * the floor and the centre are sized for.
+ */
+export function laneCount(placed: Placed[]): number {
+  const end = placed[placed.length - 1]
+  return end ? Math.round(-end.z / SPACING) + 1 : 0
+}
+
+/** Where an epoch begins, along the lane. */
+export interface Boundary {
+  epoch: number
+  z: number
+}
+
+/**
+ * The epoch boundaries inside the window, placed at the moment each epoch
+ * began rather than beside whichever block happened to follow it.
+ *
+ * Lab mode has none: there are no slots without a consensus client, and
+ * drawing lines every thirty-two blocks there would invent a clock.
+ */
+export function epochBoundaries(placed: Placed[], clock: Clock | undefined): Boundary[] {
+  if (!clock || clock.secondsPerSlot <= 0 || clock.slotsPerEpoch <= 0) return []
+  const epochSeconds = clock.secondsPerSlot * clock.slotsPerEpoch
+  const epochOf = (time: number) => Math.floor((time - clock.genesisTime) / epochSeconds)
+  const out: Boundary[] = []
+  for (let i = 1; i < placed.length; i++) {
+    const newer = placed[i - 1]
+    const older = placed[i]
+    const epoch = epochOf(newer.timestamp)
+    if (epoch === epochOf(older.timestamp)) continue
+    const began = clock.genesisTime + epoch * epochSeconds
+    // Between the two blocks, in proportion to when it began.
+    const share = (newer.timestamp - began) / Math.max(1, newer.timestamp - older.timestamp)
+    out.push({ epoch, z: newer.z + (older.z - newer.z) * Math.min(1, Math.max(0, share)) })
+  }
+  return out
+}
+
+/** Seconds as something to read: "50 s", "4 min 10 s", "1 h 3 min". */
+export function span(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s} s`
+  if (s < 3600) return s % 60 === 0 ? `${s / 60} min` : `${Math.floor(s / 60)} min ${s % 60} s`
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`
 }
 
 /** The block at a number, if the window still holds it. */
