@@ -514,6 +514,11 @@ remain, a tenth of a percent above the line, and finality carries on untroubled.
 The split is uneven because sixty-four does not divide by three, and that is the
 lesson rather than a detail: the threshold counts validators, not nodes.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/control-room-consensus-dark.png">
+  <img alt="The control room's Consensus page on the devnet: three rows — node1 geth plus Lighthouse, node2 geth plus Prysm, node3 Reth plus Teku — all at block 129 and slot 132, justified epoch 3, finalised epoch 2, and the same finalised root, under a pill reading three clients, one chain; below, the slot clock in twelve-second slots and thirty-two-slot epochs, read via Lighthouse." src="docs/img/control-room-consensus-light.png" width="100%">
+</picture>
+
 ```bash
 cupel network status
 ```
