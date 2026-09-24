@@ -615,45 +615,62 @@ async fn three_clients_one_chain() -> Result<()> {
     );
     println!("      node     client   finalised block   hash");
     println!("      ------------------------------------------------------------");
-    // Three states, kept apart at the source. `unwrap_or(Value::Null)` folded
-    // "did not answer" into "has finalised nothing", and the verdict below then
-    // called a node that was not running "a slot behind".
-    let mut answers: Vec<Option<Option<String>>> = Vec::new();
+    // Kept apart at the source. `unwrap_or(Value::Null)` once folded "did not
+    // answer" into "has finalised nothing", and the verdict below then called a
+    // node that was not running "a slot behind". Then Reth arrived and showed
+    // the opposite fault: geth answers "finalized" before there is one with an
+    // *error*, which read as a node that was not there.
+    let mut answers: Vec<Finalised> = Vec::new();
+    let mut spellings = (false, false);
     for node in network::NODES {
-        let answer = rpc(
+        let reply = rpc_reply(
             node.rpc,
             "eth_getBlockByNumber",
             &["\"finalized\"", "false"],
         )
         .await;
-        let block = match &answer {
-            Err(_) => Value::Null,
-            Ok(block) => block.clone(),
+        let state = finalised_state(reply);
+        let (number, hash) = match &state {
+            Finalised::Silent => ("—".to_string(), "—".to_string()),
+            Finalised::NotFound => {
+                spellings.0 = true;
+                ("none yet".to_string(), "—".to_string())
+            }
+            Finalised::Genesis => {
+                spellings.1 = true;
+                ("genesis".to_string(), "—".to_string())
+            }
+            Finalised::Block { number, hash } => (number.to_string(), short(hash)),
         };
-        answers.push(match &answer {
-            Err(_) => None,
-            Ok(Value::Null) => Some(None),
-            Ok(block) => Some(Some(block["hash"].as_str().unwrap_or_default().to_string())),
-        });
-        let hash = block["hash"].as_str().unwrap_or("—");
         println!(
             "      {:<8} {:<6} {:>15}   {}",
-            node.name,
-            node.execution,
-            block["number"]
-                .as_str()
-                .and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok())
-                .map_or_else(|| "—".to_string(), |n| n.to_string()),
-            short(hash)
+            node.name, node.execution, number, hash
         );
+        answers.push(state);
     }
     println!();
-    // Three outcomes, not two. A node with no finalised block yet has not
+    if spellings.0 && spellings.1 {
+        say(
+            "Look at how the two clients say the same thing. Asked for the \
+             finalised block before there is one, geth answers with an error — \
+             finalized block not found — and Reth answers with the genesis \
+             block, which is final in the trivial sense. Neither is wrong; a \
+             tool that treats the error as a dead node, or genesis as agreement, \
+             is. This walkthrough did the first until Reth joined the devnet.",
+        );
+    }
+    // Four outcomes, not two. A node with no finalised block yet has not
     // disagreed with anything — it has not been told one. Reporting that as a
     // disagreement is exactly the kind of false alarm this walkthrough is
     // supposed to teach people to avoid, and it fired on its first run.
-    let silent = answers.iter().filter(|a| a.is_none()).count();
-    let finalised: Vec<&String> = answers.iter().flatten().flatten().collect();
+    let silent = answers.iter().filter(|a| **a == Finalised::Silent).count();
+    let finalised: Vec<&String> = answers
+        .iter()
+        .filter_map(|a| match a {
+            Finalised::Block { hash, .. } => Some(hash),
+            _ => None,
+        })
+        .collect();
     field(
         "Verdict",
         if silent == answers.len() {
@@ -862,6 +879,78 @@ fn hex_u64(value: &Value) -> u64 {
         .as_str()
         .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
         .unwrap_or(0)
+}
+
+/// What an execution client says about its finalised block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Finalised {
+    /// It did not answer at all.
+    Silent,
+    /// There is none yet, said as an error — geth's way.
+    NotFound,
+    /// There is none past genesis, said by naming genesis — Reth's way.
+    Genesis,
+    /// A block past genesis.
+    Block { number: u64, hash: String },
+}
+
+/// Sort an answer to `eth_getBlockByNumber("finalized")` into what it means.
+///
+/// An error that says the block was not found is an answer, not silence: it
+/// is how geth says nothing has finalised. A null is the same thing said a
+/// third way. Only a transport failure — or an error about something else —
+/// counts as a node that did not answer.
+fn finalised_state(reply: Result<Reply>) -> Finalised {
+    match reply {
+        Err(_) => Finalised::Silent,
+        Ok(Reply::Refused(message)) if message.contains("block not found") => Finalised::NotFound,
+        Ok(Reply::Refused(_)) => Finalised::Silent,
+        Ok(Reply::Answered(Value::Null)) => Finalised::NotFound,
+        Ok(Reply::Answered(block)) => {
+            let number = hex_u64(&block["number"]);
+            let hash = block["hash"].as_str().unwrap_or_default().to_string();
+            if number == 0 {
+                Finalised::Genesis
+            } else {
+                Finalised::Block { number, hash }
+            }
+        }
+    }
+}
+
+/// A JSON-RPC answer, keeping a refusal apart from a result.
+#[derive(Debug)]
+enum Reply {
+    Answered(Value),
+    Refused(String),
+}
+
+/// A JSON-RPC call that reports an error in the answer as an answer.
+///
+/// `Err` only when nothing came back. `rpc` below turns an error field into an
+/// `Err` too, which is right for a call that must succeed and wrong for a
+/// question whose honest answer can be an error.
+async fn rpc_reply(url: &str, method: &str, params: &[&str]) -> Result<Reply> {
+    let params: Vec<Value> = params
+        .iter()
+        .map(|p| serde_json::from_str(p).unwrap_or_else(|_| Value::String((*p).to_string())))
+        .collect();
+    let response: Value = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?
+        .post(url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": method, "params": params
+        }))
+        .send()
+        .await
+        .with_context(|| format!("{url} did not answer"))?
+        .json()
+        .await?;
+    Ok(match response.get("error").filter(|e| !e.is_null()) {
+        Some(error) => Reply::Refused(error["message"].as_str().unwrap_or_default().to_string()),
+        None => Reply::Answered(response["result"].clone()),
+    })
 }
 
 /// A JSON-RPC call against a public endpoint.
@@ -1193,6 +1282,53 @@ mod tests {
             );
             assert!(said.contains(mode.chain()), "{mode:?} said: {said}");
         }
+    }
+
+    #[test]
+    fn nothing_finalised_is_one_fact_however_a_client_spells_it() {
+        // geth, before the first finalised epoch — verbatim from a devnet.
+        let geth = Ok(Reply::Refused("finalized block not found".into()));
+        assert_eq!(finalised_state(geth), Finalised::NotFound);
+        // Reth, at the same moment: the genesis block.
+        let reth = Ok(Reply::Answered(serde_json::json!({
+            "number": "0x0", "hash": "0xc742176f51e653bf"
+        })));
+        assert_eq!(finalised_state(reth), Finalised::Genesis);
+        assert_eq!(
+            finalised_state(Ok(Reply::Answered(Value::Null))),
+            Finalised::NotFound
+        );
+        // Silence is only silence.
+        assert_eq!(
+            finalised_state(Err(anyhow::anyhow!("connection refused"))),
+            Finalised::Silent
+        );
+        // A method the node does not serve is not a missing block.
+        assert_eq!(
+            finalised_state(Ok(Reply::Refused(
+                "the method does not exist/is not available".into()
+            ))),
+            Finalised::Silent
+        );
+        assert_eq!(
+            finalised_state(Ok(Reply::Refused("method not found".into()))),
+            Finalised::Silent
+        );
+        assert_eq!(
+            finalised_state(Ok(Reply::Refused("internal error".into()))),
+            Finalised::Silent
+        );
+        // And a real one.
+        let block = Ok(Reply::Answered(serde_json::json!({
+            "number": "0x40", "hash": "0xabc"
+        })));
+        assert_eq!(
+            finalised_state(block),
+            Finalised::Block {
+                number: 64,
+                hash: "0xabc".into()
+            }
+        );
     }
 
     #[test]

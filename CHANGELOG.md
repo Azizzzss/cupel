@@ -112,6 +112,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Walkthrough 4 mistook "nothing finalised yet" for a dead node.** Asked for
+  the finalised block before there is one, geth answers with an error
+  (`finalized block not found`) and Reth answers with the genesis block. The
+  walkthrough treated geth's error as silence — with three geth nodes it said
+  no execution client was answering at all, while all three were. It now tells
+  a transport failure from an answer that happens to be an error, prints "none
+  yet" and "genesis" for the two spellings, and says why they differ.
+
+- **The walkthroughs are tested.** They are what a newcomer meets first, and
+  nothing ran them. CI now runs 1 and 2 against the lab chain and 3 and 4
+  against the devnet after finality, and checks each for the conclusion it
+  exists to reach — "Four calls, one block", "they agree", "one block, from two
+  implementations" — since a walkthrough printing the wrong verdict still exits
+  0. It also checks that a devnet walkthrough run against the lab refuses and
+  names the command that would start the devnet.
+
 - **The devnet's execution clients never found each other.** Given no
   `--bootnodes`, `devp2p discv4 listen` bootstraps from mainnet's, so the
   devnet's bootnode joined the public discovery network, filled its table with

@@ -218,6 +218,26 @@ jobs:
           echo "$distinct distinct gasUsed values in the last 31 blocks"
           test "$distinct" -ge 5
 
+      - name: The walkthroughs run, and reach their conclusions
+        # They are the part of this project a newcomer meets first, and until
+        # this step nothing ran them. Each is checked for the sentence it exists
+        # to arrive at, not only for exiting cleanly: a walkthrough that prints
+        # the wrong verdict still exits 0.
+        run: |
+          set -eo pipefail
+          ./target/debug/cupel lab 1 | tee lab1.log
+          grep -q "Four calls, one block" lab1.log
+          grep -q "VALID" lab1.log
+          ./target/debug/cupel lab 2 | tee lab2.log
+          grep -q "Accepted, pending, included" lab2.log
+          # And the devnet ones refuse here, naming the command that starts
+          # what they need, rather than failing somewhere inside the plumbing.
+          if ./target/debug/cupel lab 3 > lab3.log 2>&1; then
+            echo "walkthrough 3 ran against the lab chain"; exit 1
+          fi
+          cat lab3.log
+          grep -q "cupel network up" lab3.log
+
       - name: Every dashboard panel resolves
         # A dashboard cannot fail loudly: rename a metric and the panel does not
         # error, it draws an empty box that looks like a quiet chain. So the
@@ -470,6 +490,26 @@ jobs:
           done
           cat roots.txt
           test "$(sort -u roots.txt | wc -l)" -eq 1
+
+      - name: The walkthroughs agree with the chain
+        # Run after finality, so walkthrough 4 has something to compare. The
+        # execution side can trail the beacon side by a moment, which the
+        # walkthrough rightly calls "finalising now" — so it gets a few tries
+        # to reach the verdict, and fails only if it never does.
+        run: |
+          set -o pipefail
+          ./target/debug/cupel lab 3 | tee lab3.log
+          grep -q "Finalised epoch" lab3.log
+          for attempt in 1 2 3 4 5 6; do
+            ./target/debug/cupel lab 4 | tee lab4.log
+            if grep -q "one root, three clients — they agree" lab4.log \
+               && grep -q "one block, from two implementations of the execution layer" lab4.log; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "walkthrough 4 never reached agreement"
+          exit 1
 
       - name: The devnet carries the same contracts as the lab
         run: |
