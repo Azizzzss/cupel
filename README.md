@@ -14,7 +14,7 @@ either too large to see or too simplified to be real.
 Cupel gives you both. One command gives you a working chain in about eight
 seconds — no sync, no download — with annotated reference contracts already
 deployed, a gateway in front of it and dashboards behind it. A second command
-gives you a **real network**: three execution clients paired with Lighthouse,
+gives you a **real network**: three execution clients — geth twice, Reth once — paired with Lighthouse,
 Prysm and Teku, sixty-four validators, a discovery bootnode, and a chain that
 genuinely reaches finality. Same contracts, same addresses, running on a laptop.
 
@@ -358,7 +358,7 @@ from what it describes and nothing catches it.
 | **RPC gateway** | Capability routing, health, failover, caching, metrics | ✅ |
 | **Policy signer** | A held key behind ceilings, allowlists and budgets, with an audit log | ✅ |
 | **Control room** | Blocks as they arrive and what was in them, accounts and contracts, gateway health, client agreement, a clock in the chain's own units, and an Engine API walkthrough that produces real blocks — pushed by the nodes, and honest about when a number stopped being true | ✅ |
-| Execution client | geth | integrated |
+| Execution clients | geth, and Reth on the devnet's third node | integrated |
 | Consensus clients | Lighthouse, Prysm, Teku — one each, on purpose | integrated |
 | Genesis and keys | ethPandaOps' generator, pinned | integrated |
 | Monitoring | Prometheus, Grafana | integrated |
@@ -474,7 +474,7 @@ about the network itself. The difference is where blocks come from:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/two-modes-dark.svg">
-  <img alt="Lab mode: clients reach a gateway on 8545 which forwards to one geth node, driven by a block producer on the host over the Engine API — no consensus, no peers, no finality. Network mode: the same gateway fronts three geth nodes, each paired over the Engine API with a different consensus client; those clients gossip blocks and attestations between themselves, and a bootnode gives the execution nodes discovery." src="docs/img/two-modes-light.svg" width="100%">
+  <img alt="Lab mode: clients reach a gateway on 8545 which forwards to one geth node, driven by a block producer on the host over the Engine API — no consensus, no peers, no finality. Network mode: the same gateway fronts two geth nodes and a Reth node, each paired over the Engine API with a different consensus client; those clients gossip blocks and attestations between themselves, and a bootnode gives the execution nodes discovery." src="docs/img/two-modes-light.svg" width="100%">
 </picture>
 
 `cupel network up` builds the second one:
@@ -484,19 +484,22 @@ cupel network up
 ```
 
 ```
-  Cupel network v0.6.0
+  Cupel network v0.8.0
   ---------------------------------------------------
-  node1   Lighthouse  rpc http://127.0.0.1:8555  beacon http://127.0.0.1:5052
-  node2   Prysm       rpc http://127.0.0.1:8556  beacon http://127.0.0.1:5152
-  node3   Teku        rpc http://127.0.0.1:8557  beacon http://127.0.0.1:5252
+  node1   geth  + Lighthouse  rpc http://127.0.0.1:8555  beacon http://127.0.0.1:5052
+  node2   geth  + Prysm       rpc http://127.0.0.1:8556  beacon http://127.0.0.1:5152
+  node3   Reth  + Teku        rpc http://127.0.0.1:8557  beacon http://127.0.0.1:5252
 
   Chain id     31337, 64 validators, 12s slots, Electra
   Finality     four epochs of 32 slots — about 25 minutes from genesis
   Contracts    the same addresses as lab mode
 ```
 
-Nine containers: a discovery bootnode, three geth nodes, three different
-consensus clients, and the validator clients driving them. Sixty-four validators
+Nine containers: a discovery bootnode, three execution nodes — two geth and a
+Reth — three different consensus clients, and the validator clients driving
+them. Both layers are diverse on purpose: a block Reth builds for Teku's
+proposer has to be executed and accepted by geth before Lighthouse and Prysm
+attest to it, and the other way round. Sixty-four validators
 split 22/21/21, so **no single node can finalise the chain alone** — more than
 two thirds of the stake has to agree, and that means at least two of the three
 clients agreeing, in production code, about a chain they each built

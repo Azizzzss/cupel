@@ -15,7 +15,7 @@ DARK = dict(ink="#EFEADF", muted="#9B9285", faint="#7C7469",
             rule="#332E27", surface="#1C1A17", surface2="#24211D",
             glow="#F0813E", bead="#A3BAC8", bg="none")
 
-TWO_MODES = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 330" width="980" height="330" role="img" aria-label="Lab mode has one geth node driven by a block producer on the host over the Engine API. Network mode has three geth nodes each paired with a different consensus client, gossiping between themselves, with a bootnode for execution-layer discovery.">
+TWO_MODES = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 330" width="980" height="330" role="img" aria-label="Lab mode has one geth node driven by a block producer on the host over the Engine API. Network mode has two geth nodes and a Reth node, each paired with a different consensus client, gossiping between themselves, with a bootnode for execution-layer discovery.">
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="{ink}"/></marker>
     <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="{glow}"/></marker>
@@ -72,7 +72,7 @@ TWO_MODES = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 330" wid
     <g font-size="11.5" text-anchor="middle" fill="{ink}">
       <rect x="529" y="162" width="92" height="28" rx="4" fill="none" stroke="{ink}" stroke-width="1.4"/><text x="575" y="180">geth</text>
       <rect x="689" y="162" width="92" height="28" rx="4" fill="none" stroke="{ink}" stroke-width="1.4"/><text x="735" y="180">geth</text>
-      <rect x="849" y="162" width="92" height="28" rx="4" fill="none" stroke="{ink}" stroke-width="1.4"/><text x="895" y="180">geth</text>
+      <rect x="849" y="162" width="92" height="28" rx="4" fill="none" stroke="{ink}" stroke-width="1.4"/><text x="895" y="180">Reth</text>
     </g>
 
     <g stroke="{glow}" stroke-width="1.3">
@@ -99,7 +99,7 @@ TWO_MODES = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 330" wid
     <text x="735" y="277" font-size="10.5" text-anchor="middle" fill="{bead}">blocks and attestations, over gossip</text>
 
     <rect x="655" y="288" width="160" height="20" rx="10" fill="none" stroke="{faint}" stroke-width="1.2" stroke-dasharray="3 3"/>
-    <text x="735" y="302" font-size="10" text-anchor="middle" fill="{muted}">bootnode — the geths find each other</text>
+    <text x="735" y="302" font-size="10" text-anchor="middle" fill="{muted}">bootnode — the three find each other</text>
   </g>
 </svg>
 """

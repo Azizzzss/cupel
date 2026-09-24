@@ -18,6 +18,8 @@ export interface NodeTarget {
   /** The same node's WebSocket, for `newHeads`; absent where none is published. */
   ws?: string
   beacon?: string
+  /** Which execution client answers on `rpc`, where the page knows. */
+  execution?: string
   consensus?: string
 }
 
@@ -49,13 +51,19 @@ export const LAB: NodeTarget[] = [
   { name: 'lab', rpc: GATEWAY, ws: VIEWING_LOCALLY ? 'ws://127.0.0.1:8547' : undefined },
 ]
 
-/** Network mode: three execution clients, three different consensus clients. */
+/**
+ * Network mode: three nodes, two execution clients, three consensus clients.
+ *
+ * Mirrors `NODES` in `crates/cupel/src/network.rs`, and a Rust test reads this
+ * file to check the pairings agree.
+ */
 export const NETWORK: NodeTarget[] = [
   {
     name: 'node1',
     rpc: 'http://127.0.0.1:8555',
     ws: 'ws://127.0.0.1:8558',
     beacon: 'http://127.0.0.1:5052',
+    execution: 'geth',
     consensus: 'Lighthouse',
   },
   {
@@ -63,6 +71,7 @@ export const NETWORK: NodeTarget[] = [
     rpc: 'http://127.0.0.1:8556',
     ws: 'ws://127.0.0.1:8559',
     beacon: 'http://127.0.0.1:5152',
+    execution: 'geth',
     consensus: 'Prysm',
   },
   {
@@ -70,6 +79,7 @@ export const NETWORK: NodeTarget[] = [
     rpc: 'http://127.0.0.1:8557',
     ws: 'ws://127.0.0.1:8560',
     beacon: 'http://127.0.0.1:5252',
+    execution: 'Reth',
     consensus: 'Teku',
   },
 ]

@@ -339,6 +339,7 @@ jobs:
           for image in ethpandaops/ethereum-genesis-generator:6.2.1 \
                        ethereum/client-go:stable \
                        ethereum/client-go:alltools-stable \
+                       ghcr.io/paradigmxyz/reth:latest \
                        sigp/lighthouse:latest \
                        gcr.io/offchainlabs/prysm/beacon-chain:latest \
                        gcr.io/offchainlabs/prysm/validator:latest \
@@ -490,6 +491,30 @@ jobs:
             --rpc-url $RPC --private-key $KEY --timeout 120 >/dev/null
           test "$(cast call 0x00000000000000000000000000000000c0de0020 'balanceOf(address)(uint256)' $ME --rpc-url $RPC)" \
             = "1000000000000000000000 [1e21]"
+
+      - name: The execution clients find each other
+        # Blocks travel over the consensus network, so three execution clients
+        # that never peer still agree about every block — and the devnet did
+        # exactly that for five releases, because the bootnode had joined
+        # mainnet's discovery network and handed out mainnet nodes. Transactions
+        # are what the execution network carries, so ask it directly: every
+        # node should see the other two.
+        run: |
+          for _ in $(seq 1 24); do
+            ok=1; line=""
+            for port in 8555 8556 8557; do
+              peers=$(curl -s -X POST "http://127.0.0.1:$port" -H 'content-type: application/json' \
+                -d '{"jsonrpc":"2.0","id":1,"method":"net_peerCount","params":[]}' | jq -r '.result // "0x0"')
+              line="$line $port=$((peers))"
+              [ "$((peers))" -ge 2 ] || ok=0
+            done
+            echo "execution peers:$line"
+            [ "$ok" = 1 ] && exit 0
+            sleep 5
+          done
+          echo "the execution clients never formed a mesh"
+          docker logs cupel-bootnode 2>&1 | tail -20
+          exit 1
 
       - name: Traffic lands on the devnet too
         # Sent to node1 and gossiped: the proposer of any given slot may be

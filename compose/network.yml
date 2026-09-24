@@ -84,6 +84,16 @@ services:
   # This used to be geth's `bootnode` binary. That binary no longer exists — it
   # was dropped from go-ethereum, and the alltools image ships without it.
   # `devp2p discv4 listen` is the replacement and does the same job.
+  #
+  # With one difference that went unnoticed for five releases: given no
+  # --bootnodes, `devp2p` bootstraps from *mainnet's*. This node joined the
+  # public Ethereum discovery network, filled its table with thousands of
+  # mainnet nodes, and answered every devnet node's lookup with them — which
+  # --netrestrict then threw away. The execution nodes never found each other
+  # (`Looking for peers tried=0`), transactions never crossed devp2p, and a
+  # transaction sent to node1 waited for one of node1's own validators to
+  # propose. Blocks travel over the consensus network, so nothing else broke.
+  # An empty list, explicitly, keeps it on this network alone.
   bootnode:
     image: ethereum/client-go:alltools-stable
     container_name: cupel-bootnode
@@ -92,6 +102,8 @@ services:
     command:
       - discv4
       - listen
+      - --bootnodes
+      - ""
       - --nodekey
       - ${EL_BOOTNODE_KEY}
       - --addr
@@ -336,10 +348,64 @@ services:
 
   # ------------------------------------------------------------------- node 3
 
+  # Reth, not geth. Three consensus clients over one execution client argued
+  # for client diversity with half of the stack; this node is Rust on the
+  # execution side and Java on the consensus side, and a block now has to be
+  # built by one implementation and accepted by another before it is final.
+  #
+  # The flags are geth's, near enough — the same genesis file, the same
+  # bootnode, the same --nat and --netrestrict for the same reasons. The
+  # differences that matter:
+  #
+  # - No `init` step: `reth node` writes genesis into an empty datadir itself.
+  # - No --miner.gasprice. Reth has no floor on the tip its builder will take
+  #   unless one is asked for (--txpool.minimum-priority-fee), which is the
+  #   behaviour geth needed a flag to approach.
+  # - Archive by default; --full would prune, and debug_ and old-state calls
+  #   would start failing on this node alone.
+  # - Metrics at the root path rather than geth's /debug/metrics/prometheus —
+  #   prometheus.yml says so per target.
+  # - No `geth attach`, so the health check asks eth_chainId over the HTTP port
+  #   with bash's /dev/tcp. The image is Ubuntu with bash and no curl.
   el3:
-    <<: *geth
+    image: ghcr.io/paradigmxyz/reth:latest
     container_name: cupel-el3
     profiles: [peers]
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        exec reth node \
+          --chain /genesis/genesis.json \
+          --datadir /data \
+          --bootnodes "$$EL_BOOTNODE" \
+          --nat "extip:$$SELF_IP" \
+          --netrestrict "$$CUPEL_SUBNET" \
+          --port 30303 --discovery.port 30303 \
+          --http --http.addr 0.0.0.0 --http.port 8545 \
+          --http.api eth,net,web3,debug,txpool,admin \
+          --http.corsdomain '*' \
+          --ws --ws.addr 0.0.0.0 --ws.port 8546 \
+          --ws.api eth,net,web3,debug,txpool \
+          --ws.origins '*' \
+          --authrpc.addr 0.0.0.0 --authrpc.port 8551 \
+          --authrpc.jwtsecret /jwt/jwtsecret \
+          --metrics 0.0.0.0:6060
+    healthcheck:
+      # bash by name: CMD-SHELL means /bin/sh, which on Ubuntu is dash, and
+      # dash has no /dev/tcp.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/8545 &&
+          printf 'POST / HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: 47\r\n\r\n{"jsonrpc":"2.0","id":1,"method":"eth_chainId"}' >&3 &&
+          grep -q '"result"' <&3
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 5s
     environment:
       SELF_IP: ${IP_EL3}
       EL_BOOTNODE: ${EL_BOOTNODE}

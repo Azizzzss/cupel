@@ -608,10 +608,12 @@ async fn three_clients_one_chain() -> Result<()> {
 
     step(2, "And the execution layer underneath");
     say(
-        "Each beacon node drives its own geth. If consensus agrees then the \
-         execution chain under it must agree too: same block, same hash.",
+        "Each beacon node drives its own execution client — geth under \
+         Lighthouse and Prysm, Reth under Teku. If consensus agrees then the \
+         execution chain under it must agree too: same block, same hash, \
+         whichever program built it and whichever checked it.",
     );
-    println!("      node     finalised block   hash");
+    println!("      node     client   finalised block   hash");
     println!("      ------------------------------------------------------------");
     // Three states, kept apart at the source. `unwrap_or(Value::Null)` folded
     // "did not answer" into "has finalised nothing", and the verdict below then
@@ -635,8 +637,9 @@ async fn three_clients_one_chain() -> Result<()> {
         });
         let hash = block["hash"].as_str().unwrap_or("—");
         println!(
-            "      {:<8} {:>15}   {}",
+            "      {:<8} {:<6} {:>15}   {}",
             node.name,
+            node.execution,
             block["number"]
                 .as_str()
                 .and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok())
@@ -662,7 +665,7 @@ async fn three_clients_one_chain() -> Result<()> {
         } else if finalised.len() < answers.len() {
             "finalising now: some nodes have the block, the rest have not been told about it yet"
         } else if finalised.iter().all(|h| *h == finalised[0]) {
-            "one block, three execution clients"
+            "one block, from two implementations of the execution layer"
         } else {
             "the execution clients disagree"
         },
@@ -680,9 +683,16 @@ async fn three_clients_one_chain() -> Result<()> {
          all given to one node: a finalised epoch on this chain required at \
          least two independent implementations to have agreed.",
     );
+    say(
+        "The same argument runs underneath. Geth is Go and Reth is Rust, and a \
+         block Reth builds for Teku's proposer has to be executed and accepted \
+         by the two geth nodes before Lighthouse and Prysm will attest to it — \
+         and the other way round. Agreement on the state root is agreement \
+         between separate programs about every balance and storage slot.",
+    );
 
     closing(&[
-        "Three programs, written separately, arriving at the same block.",
+        "Five programs, written separately, arriving at the same block.",
         "`cupel network status` prints this whenever you want it.",
     ]);
     Ok(())

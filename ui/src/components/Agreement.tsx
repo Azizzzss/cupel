@@ -58,7 +58,7 @@ export function Agreement() {
           <thead>
             <tr>
               <th>node</th>
-              <th>consensus</th>
+              <th>clients</th>
               <th>block</th>
               <th>slot</th>
               <th>just.</th>
@@ -74,7 +74,10 @@ export function Agreement() {
               return (
                 <tr key={node.target.name} className={age.kind === 'stale' ? 'stale' : undefined}>
                   <td className="name">{node.target.name}</td>
-                  <td>{node.target.consensus}</td>
+                  <td>
+                    {node.target.execution && <span className="faint">{node.target.execution} + </span>}
+                    {node.target.consensus}
+                  </td>
                   <td className="num">{shown.execution.ok ? shown.execution.value.number : '—'}</td>
                   <td className="num">{state ? state.headSlot : '—'}</td>
                   <td className="num">{state ? state.justified : '—'}</td>

@@ -102,7 +102,9 @@ export default function Depth() {
     const head = node.row.value?.execution
     return {
       name: node.target.name,
-      consensus: node.target.consensus ?? '',
+      // Both halves of the node: the marker is where the execution client says
+      // the head is, and the consensus client is what told it.
+      consensus: [node.target.execution, node.target.consensus].filter(Boolean).join(' + '),
       standing: standing(placed, head?.ok ? head.value : undefined),
     }
   })

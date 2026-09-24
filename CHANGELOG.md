@@ -11,6 +11,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Reth on the devnet.** Node 3 runs Reth under Teku instead of a third geth,
+  so client diversity now holds on both layers: a block Reth builds for Teku's
+  proposer has to be executed and accepted by the two geth nodes before
+  Lighthouse and Prysm attest to it, and the other way round. Verified on a
+  fresh devnet — blocks built by each accepted by the other, one head hash on
+  all three. A swap rather than a fourth node, because the 22/21/21 validator
+  split and the finality arithmetic the walkthroughs teach depend on there
+  being three.
+
+  The flags follow geth's for the same reasons; the differences are written
+  beside them in `network.yml` (no init step, no tip floor to disable, archive
+  unless told otherwise, metrics at the root path, a health check over bash's
+  `/dev/tcp` because the image has no curl). The banner, `network status`,
+  walkthrough 4, the agreement table and the 3D scene's labels all name both
+  clients on each node, and tests check that the compose file, `NODES` and the
+  control room's copy agree.
+
 - **`cupel traffic`: a chain with something happening on it.** Every picture of
   an idle chain is the same flat line, so this sends what a used one carries —
   ether payments, token mints and transfers, vault deposits and redemptions,
@@ -94,6 +111,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   carries it either way.
 
 ### Fixed
+
+- **The devnet's execution clients never found each other.** Given no
+  `--bootnodes`, `devp2p discv4 listen` bootstraps from mainnet's, so the
+  devnet's bootnode joined the public discovery network, filled its table with
+  mainnet nodes, and answered every devnet node's lookup with them —
+  `--netrestrict` discarded them all, and geth logged `Looking for peers
+  tried=0` for ever. A crawl of the bootnode found 136 nodes, one of them on
+  the devnet. Blocks travel over the consensus network, so nothing visibly
+  broke; what broke was transaction gossip — a transaction sent to node1 waited
+  for one of node1's own validators to propose. The bootnode is now given an
+  explicitly empty list, the mesh forms in seconds, `network status` shows
+  execution peers beside consensus peers and says what an isolated execution
+  client means, and CI requires every node to see the other two.
 
 - **The 3D page drew sixty frames a second for nobody.** The browser stops a
   background tab by itself, but not a canvas scrolled out of view while the

@@ -44,8 +44,13 @@ scrape_configs:
         labels: { node: node1, client: geth }
       - targets: ["cupel-el2:6060"]
         labels: { node: node2, client: geth }
+      # Reth serves the exposition format at the root, and a label beginning
+      # with two underscores overrides the job's path for this target alone.
+      # Same job, so "every execution client is up" still counts three. Its
+      # metrics are named reth_*, so the geth panels on the execution
+      # dashboard draw nodes 1 and 2 and leave this one out rather than guess.
       - targets: ["cupel-el3:6060"]
-        labels: { node: node3, client: geth }
+        labels: { node: node3, client: reth, __metrics_path__: / }
 
   # Each consensus client publishes on its own port, because none of the three
   # agreed on a default.

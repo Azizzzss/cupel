@@ -2,7 +2,8 @@
 //! host.
 //!
 //! Lab mode exists because it is instant. This exists because it is real. Three
-//! execution clients, three *different* consensus clients, sixty-four
+//! execution clients — two geth and a Reth — under three *different* consensus
+//! clients, sixty-four
 //! validators, discovery, gossip, attestations and finality — everything lab
 //! mode skips. The cost is a minute to the first finalised epoch instead of a
 //! chain that is simply there.
@@ -93,24 +94,30 @@ const CL_QUIC_PORT: u16 = 9001;
 const PRYSM_WALLET_PASSWORD: &str = "cupel";
 const PRYSM_PASSWORD: &str = "prysm-password.txt";
 
-/// The three nodes, their execution RPC, and the client each one runs.
+/// The three nodes, their execution RPC, and the clients each one runs.
+///
+/// Node 3 runs Reth rather than geth. `network.yml` must agree, and a test
+/// below reads it to check that it does.
 pub(crate) const NODES: [Node; 3] = [
     Node {
         name: "node1",
         rpc: "http://127.0.0.1:8555",
         beacon: CL1_URL,
+        execution: "geth",
         consensus: "Lighthouse",
     },
     Node {
         name: "node2",
         rpc: "http://127.0.0.1:8556",
         beacon: "http://127.0.0.1:5152",
+        execution: "geth",
         consensus: "Prysm",
     },
     Node {
         name: "node3",
         rpc: "http://127.0.0.1:8557",
         beacon: "http://127.0.0.1:5252",
+        execution: "Reth",
         consensus: "Teku",
     },
 ];
@@ -121,6 +128,7 @@ pub(crate) struct Node {
     pub(crate) name: &'static str,
     pub(crate) rpc: &'static str,
     pub(crate) beacon: &'static str,
+    pub(crate) execution: &'static str,
     pub(crate) consensus: &'static str,
 }
 
@@ -552,22 +560,54 @@ pub(crate) async fn status(_root: &Path) -> Result<()> {
         .build()?;
 
     println!();
-    println!("  node    consensus     block   slot   justified   finalized   peers");
-    println!("  --------------------------------------------------------------------");
+    println!(
+        "  node    execution  consensus     block   slot   justified   finalized   peers el/cl"
+    );
+    println!(
+        "  -------------------------------------------------------------------------------------"
+    );
     let mut peerless = Vec::new();
+    let mut alone = Vec::new();
     for node in NODES {
         let block = block_number(&client, node.rpc).await;
         let (slot, justified, finalized) = beacon_state(&client, node.beacon).await;
         let peers = peer_count(&client, node.beacon).await;
+        let el_peers = execution_peers(&client, node.rpc).await;
         if peers == "0" {
             peerless.push(node.consensus);
         }
+        if el_peers == "0" {
+            alone.push(format!("{} on {}", node.execution, node.name));
+        }
         println!(
-            "  {:<7} {:<12} {:>6} {:>6} {:>11} {:>11} {:>7}",
-            node.name, node.consensus, block, slot, justified, finalized, peers
+            "  {:<7} {:<10} {:<12} {:>6} {:>6} {:>11} {:>11} {:>7}",
+            node.name,
+            node.execution,
+            node.consensus,
+            block,
+            slot,
+            justified,
+            finalized,
+            format!("{el_peers}/{peers}")
         );
     }
     println!();
+
+    // The execution layer's own network carries transactions, not blocks, so
+    // an execution client with no peers breaks nothing visible: blocks arrive
+    // over the consensus network as before. What it breaks is gossip — a
+    // transaction sent to it waits for one of its own validators to propose.
+    // This went unseen for five releases, because the bootnode had wandered
+    // onto mainnet and nothing asked.
+    if !alone.is_empty() {
+        println!(
+            "  {} has no execution peers — blocks still arrive through its consensus \
+             client, but a transaction sent to it stays with it until one of its own \
+             validators proposes.",
+            alone.join(" and ")
+        );
+        println!();
+    }
 
     // Peers earn a column because a client with none is the failure this mode
     // actually produces, and it is invisible everywhere else: blocks still
@@ -608,8 +648,18 @@ async fn peer_count(client: &reqwest::Client, beacon: &str) -> String {
 }
 
 async fn block_number(client: &reqwest::Client, rpc: &str) -> String {
+    quantity(client, rpc, "eth_blockNumber").await
+}
+
+/// How many devp2p peers an execution client has.
+async fn execution_peers(client: &reqwest::Client, rpc: &str) -> String {
+    quantity(client, rpc, "net_peerCount").await
+}
+
+/// A JSON-RPC method that answers with a hex quantity, as a decimal string.
+async fn quantity(client: &reqwest::Client, rpc: &str, method: &str) -> String {
     let body = serde_json::json!({
-        "jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []
+        "jsonrpc": "2.0", "id": 1, "method": method, "params": []
     });
     let Ok(response) = client.post(rpc).json(&body).send().await else {
         return "—".into();
@@ -930,8 +980,8 @@ fn banner(serving: Option<(&str, &str)>) {
     }
     for node in NODES {
         println!(
-            "  {:<7} {:<11} rpc {}  beacon {}",
-            node.name, node.consensus, node.rpc, node.beacon
+            "  {:<7} {:<5} + {:<11} rpc {}  beacon {}",
+            node.name, node.execution, node.consensus, node.rpc, node.beacon
         );
     }
     println!();
@@ -1210,6 +1260,108 @@ mod tests {
             compose.contains(&format!("--wallet-password-file=/keys/{PRYSM_PASSWORD}")),
             "compose/network.yml does not read /keys/{PRYSM_PASSWORD}"
         );
+    }
+
+    /// A service's block in the compose file: from `  name:` to the next
+    /// service at the same indentation.
+    fn service(compose: &str, name: &str) -> String {
+        let header = format!("  {name}:");
+        let mut lines = compose.lines().skip_while(|line| *line != header);
+        let first = lines
+            .next()
+            .unwrap_or_else(|| panic!("network.yml has no service {name}"));
+        let is_next_key = |line: &str| {
+            let top_level = !line.is_empty() && !line.starts_with(' ');
+            let sibling = line.starts_with("  ")
+                && !line.starts_with("   ")
+                && !line.trim_start().starts_with('#');
+            top_level || sibling
+        };
+        std::iter::once(first)
+            .chain(lines.take_while(|line| !is_next_key(line)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn each_node_runs_the_execution_client_it_is_named_for() {
+        // The banner, `network status`, walkthrough 4 and the control room all
+        // say which client each node runs, and they read it from NODES. The
+        // compose file is what actually runs, so the two must agree.
+        let compose = include_str!("../../../compose/network.yml");
+        for (index, node) in NODES.iter().enumerate() {
+            let block = service(compose, &format!("el{}", index + 1));
+            match node.execution {
+                "geth" => assert!(block.contains("<<: *geth"), "{} should run geth", node.name),
+                "Reth" => assert!(
+                    block.contains("image: ghcr.io/paradigmxyz/reth"),
+                    "{} should run Reth",
+                    node.name
+                ),
+                other => panic!("no check for {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_bootnode_stays_off_mainnet() {
+        // Given no --bootnodes, `devp2p discv4 listen` bootstraps from
+        // mainnet's, and the devnet's bootnode filled its table with public
+        // nodes that every devnet node then discarded. The empty value has to
+        // be there, explicitly.
+        let compose = include_str!("../../../compose/network.yml");
+        let bootnode = service(compose, "bootnode");
+        assert!(
+            bootnode.contains("- --bootnodes\n      - \"\""),
+            "the bootnode must be given an explicitly empty --bootnodes"
+        );
+    }
+
+    #[test]
+    fn the_control_room_pairs_the_same_clients() {
+        // The page names each node's clients in the 3D scene and the agreement
+        // table from its own copy of this list. Mirrored, so checked.
+        let page = include_str!("../../../ui/src/api/chain.ts");
+        for node in NODES {
+            let at = page
+                .find(&format!("name: '{}'", node.name))
+                .unwrap_or_else(|| panic!("chain.ts does not list {}", node.name));
+            let entry = &page[at..page[at..].find('}').map_or(page.len(), |end| at + end)];
+            for (field, value) in [("execution", node.execution), ("consensus", node.consensus)] {
+                assert!(
+                    entry.contains(&format!("{field}: '{value}'")),
+                    "chain.ts gives {} a different {field} client than {value}",
+                    node.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reth_is_given_what_the_devnet_needs_from_any_execution_client() {
+        // Each of these was learned the hard way on geth, and none of them is
+        // specific to geth: without --nat the mesh never forms, without the
+        // subnet restriction discovery wanders, without the secret there is no
+        // Engine API, without CORS the control room reads nothing, and without
+        // txpool the pool page is empty.
+        let compose = include_str!("../../../compose/network.yml");
+        let reth = service(compose, "el3");
+        for flag in [
+            "--chain /genesis/genesis.json",
+            "--bootnodes \"$$EL_BOOTNODE\"",
+            "--nat \"extip:$$SELF_IP\"",
+            "--netrestrict \"$$CUPEL_SUBNET\"",
+            "--authrpc.jwtsecret /jwt/jwtsecret",
+            "--http.corsdomain '*'",
+            "--ws.origins '*'",
+            "--http.api eth,net,web3,debug,txpool,admin",
+            "--metrics 0.0.0.0:6060",
+        ] {
+            assert!(reth.contains(flag), "Reth is not given {flag}");
+        }
+        // Pruning would make debug_ and historical-state calls fail on this
+        // node alone, which is the hardest kind of difference to notice.
+        assert!(!reth.contains("--full"), "Reth must stay an archive node");
     }
 
     #[test]
