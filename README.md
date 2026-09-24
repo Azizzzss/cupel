@@ -840,6 +840,7 @@ and being able to query the past is worth a great deal in a teaching tool.
 | **E** | Multi-client network — three consensus clients, a bootnode, real finality | ✅ `v0.5.1` |
 | | Walkthroughs — four numbered lessons that do real work and narrate it | ✅ `v0.6.0` |
 | | Control room — the same machinery, watched in a browser | ✅ `v0.7.0` |
+| | A chain in use — traffic, the pool, Reth beside geth, walkthroughs under test | ✅ `v0.8.0` |
 | **F** | Chainlink oracle — a contract reading an off-chain price | next |
 | **G** | Blockscout and a faucet | planned |
 

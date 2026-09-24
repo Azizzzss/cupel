@@ -1576,7 +1576,7 @@ dependencies = [
 
 [[package]]
 name = "cupel"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "alloy",
  "anyhow",
@@ -1597,7 +1597,7 @@ dependencies = [
 
 [[package]]
 name = "cupel-gateway"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "axum",
  "reqwest 0.12.28",
@@ -1609,7 +1609,7 @@ dependencies = [
 
 [[package]]
 name = "cupel-producer"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "hex",
  "jsonwebtoken",
@@ -1624,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "cupel-signer"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "alloy",
  "axum",

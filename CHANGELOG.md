@@ -9,6 +9,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+---
+
+## [0.8.0] — A chain in use
+
+Not phase F. The oracle waits while what exists is made to earn its place: a
+chain with traffic on it, the pool it waits in, two execution clients as well
+as three consensus clients, a 3D scene that keeps time and names who is who,
+pictures on the front page, and walkthroughs that CI now runs. Bringing Reth up
+turned up the release's most consequential fix — the devnet's execution clients
+had never peered.
+
 ### Added
 
 - **Reth on the devnet.** Node 3 runs Reth under Teku instead of a third geth,
