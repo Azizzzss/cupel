@@ -18,11 +18,13 @@ env:
   RUSTFLAGS: -D warnings
 
 # A newer push to a pull request makes the older run pointless, so it is
-# cancelled. On main it is not: every commit there gets a verdict, and the
-# release workflow asks for the one on the commit it is publishing. Cancelling
-# on main meant that pushing more often than a full run takes — about thirty
-# minutes, most of it waiting for the devnet to finalise — left no commit with
-# a finished run at all.
+# cancelled. On main a run that has started is left to finish: cancelling there
+# meant that pushing more often than a full run takes — about thirty minutes,
+# most of it waiting for the devnet to finalise — left no commit with a finished
+# run at all. GitHub still keeps only one run *waiting* per group, so a commit
+# whose run has not started yet when a newer one arrives is skipped; the newer
+# commit's run covers it. The release workflow waits for the run on the exact
+# commit it publishes, so push a release commit and let its run start.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
